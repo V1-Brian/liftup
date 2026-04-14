@@ -227,5 +227,9 @@ app.delete('/api/invoices/:month', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`🚀  Liftup API on :${PORT}`));
+if (require.main === module) {
+  const PORT = process.env.PORT || 3001;
+  app.listen(PORT, () => console.log(`🚀  Liftup API on :${PORT}`));
+}
+
+module.exports = app;
