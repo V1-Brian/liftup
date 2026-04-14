@@ -16,22 +16,6 @@ app.use(express.json({ limit: '5mb' }));
 // ── Health ──────────────────────────────────────────────────────────────────
 app.get('/health', (_, res) => res.json({ ok: true, ts: new Date() }));
 
-// ── One-shot migration (remove after first run) ──────────────────────────────
-app.post('/api/_migrate', async (req, res) => {
-  if (req.headers['x-migrate-key'] !== process.env.MIGRATE_KEY) {
-    return res.status(401).json({ error: 'unauthorized' });
-  }
-  const fs   = require('fs');
-  const path = require('path');
-  const sql  = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
-  try {
-    await pool.query(sql);
-    res.json({ ok: true, message: 'Migration complete' });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
 // ── SKU CONFIG ──────────────────────────────────────────────────────────────
 app.get('/api/skus', async (_, res) => {
   try {
