@@ -26,7 +26,16 @@ Sales commission tracking app. Tracks monthly invoices, orders, SKU configs, and
 - Dashboard: https://vercel.com/tfows-projects/liftup
 - Latest production URL: https://liftup-e7vw48uhv-tfows-projects.vercel.app
 - Env vars set: `DATABASE_URL`, `NODE_ENV=production`, `SHOPIFY_STORE`, `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`
-- Env vars needed (not yet set): `CRON_SECRET`, `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET`, `ZOHO_REFRESH_TOKEN`, `ZOHO_ACCOUNT_ID`, `ZOHO_REGION`, `ZOHO_INVOICE_FOLDER_ID`, `ZOHO_PAYMENT_FOLDER_ID`, `LIFTUP_EMAIL`, `OUR_EMAIL`
+- Env vars needed (not yet set): `CRON_SECRET`, `LIFTUP_EMAIL`, `OUR_EMAIL`
+- Zoho env vars (values known — add to Vercel):
+  - `ZOHO_CLIENT_ID` = `1000.J3YLNWJX3B3X3O359GNNDYI2ZWU7NX`
+  - `ZOHO_CLIENT_SECRET` = `e22f7f89ea5980f797d2e86543c082841804ff18f1`
+  - `ZOHO_REFRESH_TOKEN` = `1000.5ad6706fb8429173ccd558d621c68552.ce85bebdfb167525f52e33c12d24cb4d`
+  - `ZOHO_ACCOUNT_ID` = `7267523000000008002`
+  - `ZOHO_REGION` = `com`
+  - `ZOHO_INVOICE_FOLDER_ID` = `7267523000000148012`
+  - `ZOHO_PAYMENT_FOLDER_ID` = `7267523000000264033`
+  - `ZOHO_CREDIT_FOLDER_ID` = `7267523000000318023`
 - Deploy command: `vercel --prod` from repo root (Vercel CLI must be logged in)
 
 ### Render (Database)
@@ -99,12 +108,12 @@ DATABASE_URL="..." node migrate_v2.js    # v2 tables (already done)
 Emails land in a **Zoho Mail** inbox. The system polls two dedicated Zoho folders every 4 hours via a Vercel cron (and on-demand via the "✉ Check emails" Dashboard button). No third-party webhook or MX record setup required.
 
 ### Two dedicated Zoho folders (already created by user)
-| Folder | Purpose | Polled via env var |
-|--------|---------|-------------------|
-| LiftUp invoices folder | QuickBooks invoices sent by LiftUp | `ZOHO_INVOICE_FOLDER_ID` |
-| Payment confirmations folder | QB payment receipts + bank transfer notifications | `ZOHO_PAYMENT_FOLDER_ID` |
-
-**Folder IDs must be discovered** by running the diagnostic endpoint (see setup tasks). Once known, set them as Vercel env vars.
+| Folder | Folder ID | Env var |
+|--------|-----------|---------|
+| Liftup Invoices | `7267523000000148012` | `ZOHO_INVOICE_FOLDER_ID` |
+| Liftup Payment Confirmation | `7267523000000264033` | `ZOHO_PAYMENT_FOLDER_ID` |
+| Liftup Credit Memo | `7267523000000318023` | `ZOHO_CREDIT_FOLDER_ID` |
+| Amazon Returns | `7267523000000422018` | (not yet wired up) |
 
 ### Email sources
 - **LiftUp invoices** — sent from QuickBooks (`@intuit.com` or `@quickbooks.com`). Subject typically: `"Invoice #1234 from LiftUp"`. Contains a payment link and a PDF attachment. Invoice number is extracted from the subject line or body text (no PDF parsing needed — QB embeds the number in plain text).
@@ -197,35 +206,20 @@ The invoice number is always auto-populated regardless of discrepancies; mismatc
    ```
    Note the `accountId` from the first account in the response.
 
-### 2. Discover Zoho folder IDs (one-time diagnostic)
-Before the poll endpoint can target the two billing folders, their numeric IDs must be retrieved.
-
-Once the Zoho credentials are in `backend/.env`, run the diagnostic script:
-```bash
-cd backend && node zoho-list-folders.js
-```
-This will print all folder names and IDs. Note the IDs for the LiftUp invoice folder and the payment confirmations folder.
-
-**Note**: `backend/zoho-list-folders.js` needs to be written — see next dev task below.
-
-### 3. Update poll endpoint to target specific folders
-Currently `GET /api/email/poll` uses `searchKey=newMails` (full inbox). Once folder IDs are known:
-- Update `backend/zoho-mail.js` to add `fetchFolderMessages(folderId, limit)` using `GET /accounts/{id}/folders/{folderId}/messages`
-- Update `GET /api/email/poll` in `backend/index.js` to poll `ZOHO_INVOICE_FOLDER_ID` and `ZOHO_PAYMENT_FOLDER_ID` separately, routing each message to the correct parser by folder rather than by subject/sender detection
-
-### 4. Set Vercel env vars
+### 2. Set Vercel env vars
 In the Vercel dashboard under `tfows-projects/liftup → Settings → Environment Variables`, add:
 ```
 CRON_SECRET=<choose a random secret string>
-ZOHO_CLIENT_ID=<from step 1>
-ZOHO_CLIENT_SECRET=<from step 1>
-ZOHO_REFRESH_TOKEN=<from step 1, exchange>
-ZOHO_ACCOUNT_ID=<from step 1, accounts API>
-ZOHO_REGION=com
-ZOHO_INVOICE_FOLDER_ID=<from step 2>
-ZOHO_PAYMENT_FOLDER_ID=<from step 2>
 LIFTUP_EMAIL=cyo@liftup.us
 OUR_EMAIL=brian@skystart.org
+ZOHO_CLIENT_ID=1000.J3YLNWJX3B3X3O359GNNDYI2ZWU7NX
+ZOHO_CLIENT_SECRET=e22f7f89ea5980f797d2e86543c082841804ff18f1
+ZOHO_REFRESH_TOKEN=1000.5ad6706fb8429173ccd558d621c68552.ce85bebdfb167525f52e33c12d24cb4d
+ZOHO_ACCOUNT_ID=7267523000000008002
+ZOHO_REGION=com
+ZOHO_INVOICE_FOLDER_ID=7267523000000148012
+ZOHO_PAYMENT_FOLDER_ID=7267523000000264033
+ZOHO_CREDIT_FOLDER_ID=7267523000000318023
 ```
 
 ### 5. Run migration v3

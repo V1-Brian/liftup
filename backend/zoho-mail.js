@@ -88,9 +88,23 @@ async function zohoPut(path, body) {
 }
 
 /**
- * Fetch all unread messages (up to limit).
- * Uses searchKey=newMails — returns emails received more than ~2 min ago
- * that are still marked unread.
+ * Fetch all unread messages from a specific folder (up to limit).
+ * @param {string} folderId  — Zoho folder ID
+ */
+async function fetchFolderMessages(folderId, limit = 50) {
+  const accountId = process.env.ZOHO_ACCOUNT_ID;
+  if (!accountId) throw new Error('ZOHO_ACCOUNT_ID env var not set');
+
+  const data = await zohoGet(`/accounts/${accountId}/folders/${folderId}/messages`, {
+    status: 'unread',
+    limit:  String(limit),
+  });
+
+  return (data.data || []).map(m => ({ ...m, folderId }));
+}
+
+/**
+ * Fetch all unread messages from the full inbox (fallback — used when folder IDs not configured).
  */
 async function fetchUnreadMessages(limit = 50) {
   const accountId = process.env.ZOHO_ACCOUNT_ID;
@@ -102,7 +116,6 @@ async function fetchUnreadMessages(limit = 50) {
     includeto: 'false',
   });
 
-  // API returns { status: { code: 200 }, data: [...] }
   return data.data || [];
 }
 
@@ -206,4 +219,4 @@ async function sendEmail({ to, cc, subject, html, attachments = [] }) {
   return res.json();
 }
 
-module.exports = { fetchUnreadMessages, fetchMessageContent, markAsRead, sendEmail };
+module.exports = { fetchFolderMessages, fetchUnreadMessages, fetchMessageContent, markAsRead, sendEmail };

@@ -5,7 +5,7 @@ const { Pool } = require('pg');
 const { calcCommission } = require('./commission');
 const { getAccessToken, fetchOrdersForMonth, processOrders } = require('./shopify');
 const { detectEmailType, parseLiftUpInvoiceEmail, parseQBPaymentEmail, parseBankTransferEmail, compareInvoices } = require('./email-parser');
-const { fetchUnreadMessages, fetchMessageContent, markAsRead, sendEmail } = require('./zoho-mail');
+const { fetchFolderMessages, fetchUnreadMessages, fetchMessageContent, markAsRead, sendEmail } = require('./zoho-mail');
 const { buildSalesReport, buildCommissionInvoice } = require('./report-generator');
 
 const app  = express();
@@ -779,8 +779,24 @@ app.get('/api/email/poll', async (req, res) => {
   }
 
   try {
-    const messages = await fetchUnreadMessages(50);
-    if (!messages.length) return res.json({ ok: true, processed: 0, results: [] });
+    // Poll specific folders if configured; fall back to full-inbox search
+    const invoiceFolderId = process.env.ZOHO_INVOICE_FOLDER_ID;
+    const paymentFolderId = process.env.ZOHO_PAYMENT_FOLDER_ID;
+    const creditFolderId  = process.env.ZOHO_CREDIT_FOLDER_ID;
+
+    let messages;
+    if (invoiceFolderId || paymentFolderId) {
+      const batches = await Promise.all([
+        invoiceFolderId ? fetchFolderMessages(invoiceFolderId, 50) : Promise.resolve([]),
+        paymentFolderId ? fetchFolderMessages(paymentFolderId, 50) : Promise.resolve([]),
+        creditFolderId  ? fetchFolderMessages(creditFolderId,  50) : Promise.resolve([]),
+      ]);
+      messages = batches.flat();
+    } else {
+      messages = await fetchUnreadMessages(50);
+    }
+
+    if (!messages.length) return res.json({ ok: true, processed: 0, summary: [], results: [] });
 
     const results     = [];
     const toMarkRead  = [];
