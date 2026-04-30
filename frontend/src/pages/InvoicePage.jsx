@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
 import { fmt, fmtMonth, calcCommission, parseShopifyCSV, STATUS_OPTIONS } from '../lib/utils'
+import RecordPaymentModal from '../components/RecordPaymentModal'
 
 const defaultMonth = () => {
   const d = new Date(); d.setMonth(d.getMonth() - 1)
@@ -21,13 +22,18 @@ export default function InvoicePage() {
     invoice_number: '', verified: false, verified_date: '',
     mfr_invoice_paid: false, mfr_invoice_paid_date: '',
     commission_paid: false, commission_paid_date: '', notes: '',
+    mfr_amount_paid: 0, commission_amount_received: 0,
   })
   const [tab,         setTab]         = useState('import')
   const [saving,      setSaving]      = useState(false)
+  const [syncing,     setSyncing]     = useState(false)
   const [loading,     setLoading]     = useState(!isNew)
   const [saveMsg,     setSaveMsg]     = useState(null)
+  const [creditMsg,   setCreditMsg]   = useState(null)
   const [error,       setError]       = useState(null)
   const [dragOver,    setDragOver]    = useState(false)
+  const [paymentModal, setPaymentModal] = useState(null) // null | 'liftup_invoice' | 'commission'
+  const [invoiceId,   setInvoiceId]   = useState(null)
   const fileRef = useRef()
 
   const skuMap = Object.fromEntries(skus.map(s => [s.sku, s]))
@@ -39,15 +45,18 @@ export default function InvoicePage() {
         .then(inv => {
           setOrders(inv.orders || [])
           setAdjustments(inv.adjustments || [])
+          setInvoiceId(inv.id)
           setStatus({
-            invoice_number:        inv.invoice_number        || '',
-            verified:              inv.verified              || false,
-            verified_date:         inv.verified_date         || '',
-            mfr_invoice_paid:      inv.mfr_invoice_paid      || false,
-            mfr_invoice_paid_date: inv.mfr_invoice_paid_date || '',
-            commission_paid:       inv.commission_paid       || false,
-            commission_paid_date:  inv.commission_paid_date  || '',
-            notes:                 inv.notes                 || '',
+            invoice_number:             inv.invoice_number             || '',
+            verified:                   inv.verified                   || false,
+            verified_date:              inv.verified_date              || '',
+            mfr_invoice_paid:           inv.mfr_invoice_paid           || false,
+            mfr_invoice_paid_date:      inv.mfr_invoice_paid_date      || '',
+            commission_paid:            inv.commission_paid            || false,
+            commission_paid_date:       inv.commission_paid_date       || '',
+            notes:                      inv.notes                      || '',
+            mfr_amount_paid:            Number(inv.mfr_amount_paid)            || 0,
+            commission_amount_received: Number(inv.commission_amount_received) || 0,
           })
           setTab('invoice')
         })
@@ -55,6 +64,31 @@ export default function InvoicePage() {
         .finally(() => setLoading(false))
     }
   }, [routeMonth])
+
+  // ── Shopify Sync ──────────────────────────────────────────────────────────
+  async function handleSync() {
+    setSyncing(true); setError(null)
+    try {
+      const inv = await api.syncMonth(month)
+      setOrders(inv.orders || [])
+      setAdjustments(inv.adjustments || [])
+      setStatus({
+        invoice_number:        inv.invoice_number        || '',
+        verified:              inv.verified              || false,
+        verified_date:         inv.verified_date         || '',
+        mfr_invoice_paid:      inv.mfr_invoice_paid      || false,
+        mfr_invoice_paid_date: inv.mfr_invoice_paid_date || '',
+        commission_paid:       inv.commission_paid       || false,
+        commission_paid_date:  inv.commission_paid_date  || '',
+        notes:                 inv.notes                 || '',
+      })
+      setSaveMsg(`Synced ${inv.orders?.length || 0} orders from Shopify ✓`)
+      setTab('invoice')
+      setTimeout(() => setSaveMsg(null), 3000)
+      if (isNew) navigate(`/invoice/${month}`, { replace: true })
+    } catch (e) { setError(e.message) }
+    finally { setSyncing(false) }
+  }
 
   // ── CSV Import ────────────────────────────────────────────────────────────
   function handleFile(file) {
@@ -97,14 +131,39 @@ export default function InvoicePage() {
 
   // ── Save ──────────────────────────────────────────────────────────────────
   async function handleSave() {
-    setSaving(true); setError(null); setSaveMsg(null)
+    setSaving(true); setError(null); setSaveMsg(null); setCreditMsg(null)
     try {
-      await api.saveInvoice(month, { ...status, orders, adjustments })
+      const result = await api.saveInvoice(month, { ...status, orders, adjustments })
+      setInvoiceId(result.id)
+      // Refresh adjustments in case credits were auto-applied
+      setAdjustments(result.adjustments || [])
+      const appliedCount = result.applied_credits?.length || 0
       setSaveMsg('Saved ✓')
+      if (appliedCount > 0) {
+        setCreditMsg(`${appliedCount} open credit${appliedCount > 1 ? 's' : ''} from prior months were auto-applied as adjustments.`)
+        setTimeout(() => setCreditMsg(null), 6000)
+      }
       if (isNew) navigate(`/invoice/${month}`, { replace: true })
       setTimeout(() => setSaveMsg(null), 2500)
     } catch (e) { setError(e.message) }
     finally { setSaving(false) }
+  }
+
+  // ── Refresh status after recording a payment ──────────────────────────────
+  async function refreshInvoiceStatus() {
+    if (isNew) return
+    try {
+      const inv = await api.getInvoice(month)
+      setStatus(s => ({
+        ...s,
+        mfr_invoice_paid:           inv.mfr_invoice_paid           || false,
+        mfr_invoice_paid_date:      inv.mfr_invoice_paid_date      || '',
+        commission_paid:            inv.commission_paid            || false,
+        commission_paid_date:       inv.commission_paid_date       || '',
+        mfr_amount_paid:            Number(inv.mfr_amount_paid)            || 0,
+        commission_amount_received: Number(inv.commission_amount_received) || 0,
+      }))
+    } catch (_) {}
   }
 
   // ── Quick status patch ────────────────────────────────────────────────────
@@ -134,8 +193,9 @@ export default function InvoicePage() {
         </div>
       </div>
 
-      {error   && <div className="alert alert-error">{error}</div>}
-      {saveMsg && <div className="alert alert-success">{saveMsg}</div>}
+      {error      && <div className="alert alert-error">{error}</div>}
+      {saveMsg    && <div className="alert alert-success">{saveMsg}</div>}
+      {creditMsg  && <div className="alert alert-info">{creditMsg}</div>}
 
       {/* Month picker (new only) */}
       {isNew && (
@@ -162,7 +222,21 @@ export default function InvoicePage() {
       {/* ── TAB: IMPORT ─────────────────────────────────────────────────── */}
       {tab === 'import' && (
         <div className="no-print">
-          <div className="alert alert-info">Export from Shopify: <strong>Orders → Export → date range → CSV</strong>. Drop it below.</div>
+          {/* Shopify sync — primary action */}
+          <div className="card" style={{ marginBottom: '1.5rem' }}>
+            <div className="card-title" style={{ marginBottom: 6 }}>Sync from Shopify</div>
+            <div style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16 }}>
+              Pulls all orders for <strong>{fmtMonth(month)}</strong> directly from Shopify. Runs automatically on the 1st of each month — use this button to re-sync or sync on demand.
+            </div>
+            <button className="btn btn-primary" onClick={handleSync} disabled={syncing} style={{ minWidth: 180 }}>
+              {syncing ? 'Syncing…' : '↻ Sync from Shopify'}
+            </button>
+          </div>
+
+          {/* CSV fallback */}
+          <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 8, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Or import manually via CSV
+          </div>
           <div
             className="upload-zone"
             style={{ borderColor: dragOver ? '#888' : undefined, background: dragOver ? 'var(--bg2)' : undefined }}
@@ -449,7 +523,7 @@ export default function InvoicePage() {
               </div>
 
               <div>
-                <label style={{ marginBottom: 8 }}>Manufacturer invoice</label>
+                <label style={{ marginBottom: 8 }}>LiftUp invoice — we pay LiftUp</label>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                   <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontWeight: 400 }}>
                     <input type="checkbox" checked={status.mfr_invoice_paid}
@@ -460,12 +534,30 @@ export default function InvoicePage() {
                     <input type="date" value={status.mfr_invoice_paid_date}
                       onChange={e => patchStatus({ mfr_invoice_paid_date: e.target.value })} />
                   )}
+                  {!isNew && (
+                    <button className="btn btn-sm" onClick={() => setPaymentModal('liftup_invoice')}>
+                      + Record payment
+                    </button>
+                  )}
                 </div>
-                {status.mfr_invoice_paid && <div style={{ marginTop: 6 }}><span className="badge badge-paid">✓ Manufacturer invoice paid {status.mfr_invoice_paid_date}</span></div>}
+                {status.mfr_amount_paid > 0 && (
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>
+                      Paid: {fmt(status.mfr_amount_paid)}
+                      {!status.mfr_invoice_paid && <span style={{ color: 'var(--amber)' }}> · partial</span>}
+                    </div>
+                    <div className="progress-bar">
+                      <div className="progress-bar-fill" style={{
+                        width: `${Math.min(100, (status.mfr_amount_paid / Math.max(totalRetail + adjTotal - totalComm, 0.01)) * 100).toFixed(1)}%`
+                      }} />
+                    </div>
+                  </div>
+                )}
+                {status.mfr_invoice_paid && <div style={{ marginTop: 6 }}><span className="badge badge-paid">✓ LiftUp invoice paid {status.mfr_invoice_paid_date}</span></div>}
               </div>
 
               <div>
-                <label style={{ marginBottom: 8 }}>Commission from manufacturer</label>
+                <label style={{ marginBottom: 8 }}>Commission — LiftUp pays us</label>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                   <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontWeight: 400 }}>
                     <input type="checkbox" checked={status.commission_paid}
@@ -476,7 +568,25 @@ export default function InvoicePage() {
                     <input type="date" value={status.commission_paid_date}
                       onChange={e => patchStatus({ commission_paid_date: e.target.value })} />
                   )}
+                  {!isNew && (
+                    <button className="btn btn-sm" onClick={() => setPaymentModal('commission')}>
+                      + Record received
+                    </button>
+                  )}
                 </div>
+                {status.commission_amount_received > 0 && (
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>
+                      Received: {fmt(status.commission_amount_received)}
+                      {!status.commission_paid && <span style={{ color: 'var(--amber)' }}> · partial</span>}
+                    </div>
+                    <div className="progress-bar">
+                      <div className="progress-bar-fill" style={{
+                        width: `${Math.min(100, (status.commission_amount_received / Math.max(totalComm, 0.01)) * 100).toFixed(1)}%`
+                      }} />
+                    </div>
+                  </div>
+                )}
                 {status.commission_paid && <div style={{ marginTop: 6 }}><span className="badge badge-paid">✓ Commission received {status.commission_paid_date}</span></div>}
               </div>
             </div>
@@ -489,7 +599,7 @@ export default function InvoicePage() {
               {[
                 ['Total retail sold', fmt(totalRetail)],
                 ['Total commission', fmt(totalComm)],
-                ['Net owed to manufacturer', fmt(totalRetail - totalComm)],
+                ['Net owed to LiftUp', fmt(totalRetail + adjTotal - totalComm)],
                 ['Credit memos pending', totalCredit > 0 ? fmt(totalCredit) : 'None'],
                 ['Manual adjustments', adjTotal !== 0 ? fmt(adjTotal) : 'None'],
               ].map(([l, v]) => (
@@ -501,6 +611,16 @@ export default function InvoicePage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── PAYMENT MODAL ────────────────────────────────────────────────── */}
+      {paymentModal && (
+        <RecordPaymentModal
+          paymentType={paymentModal}
+          defaultInvoiceId={invoiceId}
+          onClose={() => setPaymentModal(null)}
+          onSaved={() => { setPaymentModal(null); refreshInvoiceStatus() }}
+        />
       )}
     </>
   )

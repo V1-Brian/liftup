@@ -3,6 +3,7 @@ import Dashboard    from './pages/Dashboard'
 import InvoicePage  from './pages/InvoicePage'
 import HistoryPage  from './pages/HistoryPage'
 import SkuPage      from './pages/SkuPage'
+import CreditsPage  from './pages/CreditsPage'
 
 function Sidebar() {
   const loc = useLocation()
@@ -25,6 +26,9 @@ function Sidebar() {
       <NavLink to="/history" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}>
         🗂 Invoice history
       </NavLink>
+      <NavLink to="/credits" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}>
+        ↩ Credits
+      </NavLink>
 
       <div className="nav-section">Settings</div>
       <NavLink to="/skus" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}>
@@ -44,6 +48,7 @@ export default function App() {
           <Route path="/invoice/new"    element={<InvoicePage />} />
           <Route path="/invoice/:month" element={<InvoicePage />} />
           <Route path="/history"        element={<HistoryPage />} />
+          <Route path="/credits"        element={<CreditsPage />} />
           <Route path="/skus"           element={<SkuPage />} />
         </Routes>
       </div>

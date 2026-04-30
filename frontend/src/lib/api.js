@@ -19,9 +19,21 @@ export const api = {
   updateSku:    (id, d)       => req('PUT',    `/api/skus/${id}`, d),
   deleteSku:    (id)          => req('DELETE', `/api/skus/${id}`),
 
-  listInvoices: ()            => req('GET',    '/api/invoices'),
-  getInvoice:   (month)       => req('GET',    `/api/invoices/${month}`),
-  saveInvoice:  (month, d)    => req('POST',   `/api/invoices/${month}`, d),
-  patchStatus:  (month, d)    => req('PATCH',  `/api/invoices/${month}/status`, d),
-  deleteInvoice:(month)       => req('DELETE', `/api/invoices/${month}`),
+  listInvoices:      ()            => req('GET',    '/api/invoices'),
+  getInvoice:        (month)       => req('GET',    `/api/invoices/${month}`),
+  saveInvoice:       (month, d)    => req('POST',   `/api/invoices/${month}`, d),
+  patchStatus:       (month, d)    => req('PATCH',  `/api/invoices/${month}/status`, d),
+  deleteInvoice:     (month)       => req('DELETE', `/api/invoices/${month}`),
+  getPaymentStatus:  ()            => req('GET',    '/api/invoices/payment-status'),
+
+  syncMonth:    (month)       => req('POST',   `/api/sync/${month}`),
+
+  listPayments:      (type)        => req('GET',    `/api/payments${type ? `?type=${type}` : ''}`),
+  createPayment:     (d)           => req('POST',   '/api/payments', d),
+
+  listCredits:       ()            => req('GET',    '/api/credits'),
+
+  getUnmatchedEmails: ()           => req('GET',    '/api/email/unmatched'),
+  resolveUnmatched:   (id)         => req('POST',   `/api/email/unmatched/${id}/resolve`),
+  pollEmails:         ()           => req('GET',    '/api/email/poll'),
 }
