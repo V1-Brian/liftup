@@ -784,12 +784,15 @@ app.get('/api/email/poll', async (req, res) => {
 
     let messages;
     if (invoiceFolderId || paymentFolderId) {
-      const batches = await Promise.all([
+      const results = await Promise.allSettled([
         invoiceFolderId ? fetchFolderMessages(invoiceFolderId, 50) : Promise.resolve([]),
         paymentFolderId ? fetchFolderMessages(paymentFolderId, 50) : Promise.resolve([]),
         creditFolderId  ? fetchFolderMessages(creditFolderId,  50) : Promise.resolve([]),
       ]);
-      messages = batches.flat();
+      messages = results.flatMap(r => {
+        if (r.status === 'rejected') { console.error('Folder fetch error:', r.reason?.message); return []; }
+        return r.value;
+      });
     } else {
       messages = await fetchUnreadMessages(50);
     }
