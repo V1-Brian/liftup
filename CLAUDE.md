@@ -147,7 +147,7 @@ The invoice number is always auto-populated regardless of discrepancies; mismatc
 - `backend/zoho-mail.js` — Zoho Mail API client: `getAccessToken`, `fetchUnreadMessages`, `fetchMessageContent`, `markAsRead`, `sendEmail`, `uploadAttachment`; in-memory token cache; requires ZOHO_* + OUR_EMAIL env vars
 - `backend/email-parser.js` — `parseLiftUpInvoiceEmail` (extracts invoice number, line items, shipping amount), `parseQBPaymentEmail`, `parseBankTransferEmail`, `detectEmailType`, `compareInvoices` (line-by-line discrepancy check)
 - `backend/report-generator.js` — `buildSalesReport` and `buildCommissionInvoice`; each returns `{ subject, html, pdfBuffer, filename }`; uses pdfkit + V1 Ventures logo from `backend/assets/logo.png`
-- `backend/assets/logo.png` — **must be placed manually** by copying the V1 Ventures PNG here; code falls back to text header if missing
+- `backend/assets/logo.png` — V1 Ventures logo; used in PDF report headers
 - `frontend/src/lib/api.js` — all API calls
 - `frontend/src/lib/utils.js` — `calcCommission`, `fmt`, `fmtMonth`, `STATUS_OPTIONS`, `parseShopifyCSV`
 - `frontend/src/pages/` — Dashboard, InvoicePage, SkuPage, HistoryPage, CreditsPage
@@ -222,10 +222,7 @@ ZOHO_PAYMENT_FOLDER_ID=7267523000000264033
 ZOHO_CREDIT_FOLDER_ID=7267523000000318023
 ```
 
-### 5. Place the logo
-Copy the V1 Ventures logo PNG to `backend/assets/logo.png`. The reports fall back to a text header if this file is missing but will display the logo when present.
-
-### 7. Redeploy to Vercel
+### 5. Redeploy to Vercel
 ```bash
 npm install   # picks up pdfkit
 vercel --prod
