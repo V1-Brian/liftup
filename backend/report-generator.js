@@ -155,10 +155,10 @@ function htmlWrap(title, month, bodyHtml) {
 <style>
   body{font-family:-apple-system,Arial,sans-serif;background:#f4f4f2;margin:0;padding:20px}
   .wrap{max-width:680px;margin:0 auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.1)}
-  .hdr{background:#1a1a1a;padding:26px 36px;display:flex;justify-content:space-between;align-items:center}
-  .hdr-left{color:#fff;font-size:22px;font-weight:800;letter-spacing:-0.5px}
-  .hdr-sub{color:#999;font-size:11px;margin-top:3px;font-weight:400}
-  .hdr-right{text-align:right}
+  .hdr{background:#1a1a1a;padding:0}
+  .hdr-table{width:100%;border-collapse:collapse}
+  .hdr-left{color:#fff;font-size:22px;font-weight:800;letter-spacing:-0.5px;padding:26px 36px;vertical-align:middle}
+  .hdr-right{text-align:right;padding:26px 36px;vertical-align:middle;white-space:nowrap}
   .hdr-title{color:#fff;font-size:16px;font-weight:700}
   .hdr-period{color:#aaa;font-size:12px;margin-top:4px}
   .red-bar{height:4px;background:#CC0000}
@@ -182,14 +182,15 @@ function htmlWrap(title, month, bodyHtml) {
 <body>
 <div class="wrap">
   <div class="hdr">
-    <div>
-      <div class="hdr-left">V1 VENTURES</div>
-      <div class="hdr-sub">Sales Representative</div>
-    </div>
-    <div class="hdr-right">
-      <div class="hdr-title">${title}</div>
-      <div class="hdr-period">${fmtMonthLabel(month)}</div>
-    </div>
+    <table class="hdr-table">
+      <tr>
+        <td class="hdr-left">V1 VENTURES</td>
+        <td class="hdr-right">
+          <div class="hdr-title">${title}</div>
+          <div class="hdr-period">${fmtMonthLabel(month)}</div>
+        </td>
+      </tr>
+    </table>
   </div>
   <div class="red-bar"></div>
   <div class="body">
