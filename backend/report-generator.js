@@ -16,6 +16,8 @@ const path        = require('fs');
 const fs          = require('fs');
 const LOGO_PATH   = require('path').join(__dirname, 'assets', 'logo.png');
 
+const CONTACT_EMAIL = () => process.env.OUR_EMAIL || 'info@rizeup.care';
+
 // ── Brand colours ────────────────────────────────────────────────────────────
 const RED        = '#CC0000';
 const DARK       = '#1a1a1a';
@@ -141,7 +143,7 @@ function pdfFooter(doc) {
   const y = 738;
   doc.moveTo(50, y).lineTo(562, y).strokeColor(BORDER).lineWidth(0.5).stroke();
   doc.font('Helvetica').fontSize(8).fillColor(GRAY)
-     .text('V1 Ventures · brian@skystart.org · Generated automatically', 50, y + 8, { align: 'center' });
+     .text(`V1 Ventures · ${CONTACT_EMAIL()} · Generated automatically`, 50, y + 8, { align: 'center' });
 }
 
 // ── HTML helpers ─────────────────────────────────────────────────────────────
@@ -196,7 +198,7 @@ function htmlWrap(title, month, bodyHtml) {
   <div class="body">
     ${bodyHtml}
   </div>
-  <div class="ftr">V1 Ventures &middot; brian@skystart.org &middot; Generated automatically</div>
+  <div class="ftr">V1 Ventures &middot; ${CONTACT_EMAIL()} &middot; Generated automatically</div>
 </div>
 </body>
 </html>`;
@@ -407,7 +409,7 @@ async function buildCommissionInvoice(invoice, orders, adjustments, month) {
     </table>
     <div class="note">
       Please remit <strong>${fmt(netComm)}</strong> to V1 Ventures.<br>
-      Questions? Contact brian@skystart.org
+      Questions? Contact ${CONTACT_EMAIL()}
     </div>`;
 
   const html = htmlWrap('Commission Invoice', month, bodyHtml);
@@ -452,7 +454,7 @@ async function buildCommissionInvoice(invoice, orders, adjustments, month) {
 
     y += 18;
     doc.font('Helvetica').fontSize(9).fillColor(GRAY)
-       .text(`Please remit ${fmt(netComm)} to V1 Ventures. Contact brian@skystart.org with any questions.`,
+       .text(`Please remit ${fmt(netComm)} to V1 Ventures. Contact ${CONTACT_EMAIL()} with any questions.`,
              50, y, { width: 512 });
 
     pdfFooter(doc);
