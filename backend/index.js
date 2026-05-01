@@ -432,26 +432,24 @@ app.get('/api/cron/monthly-sync', async (req, res) => {
 
     // 3 — Generate and send reports (only if LIFTUP_EMAIL is configured)
     const liftupEmail = process.env.LIFTUP_EMAIL;
-    const ourEmail    = process.env.OUR_EMAIL;
+    const notifyCC    = 'brian@skystart.org';
 
     if (liftupEmail) {
       const salesReport = await buildSalesReport(invoice, orders, month);
       await sendEmail({
-        to:          liftupEmail,
-        cc:          ourEmail,
-        subject:     salesReport.subject,
-        html:        salesReport.html,
-        attachments: [{ filename: salesReport.filename, buffer: salesReport.pdfBuffer, mimeType: 'application/pdf' }],
+        to:      liftupEmail,
+        cc:      notifyCC,
+        subject: salesReport.subject,
+        html:    salesReport.html,
       });
       log.push('sales report sent');
 
       const commInvoice = await buildCommissionInvoice(invoice, orders, adjustments, month);
       await sendEmail({
-        to:          liftupEmail,
-        cc:          ourEmail,
-        subject:     commInvoice.subject,
-        html:        commInvoice.html,
-        attachments: [{ filename: commInvoice.filename, buffer: commInvoice.pdfBuffer, mimeType: 'application/pdf' }],
+        to:      liftupEmail,
+        cc:      notifyCC,
+        subject: commInvoice.subject,
+        html:    commInvoice.html,
       });
       log.push('commission invoice sent');
     } else {
