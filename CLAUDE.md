@@ -25,9 +25,14 @@ Sales commission tracking app. Tracks monthly invoices, orders, SKU configs, and
 - Project: `tfows-projects/liftup`
 - Dashboard: https://vercel.com/tfows-projects/liftup
 - Latest production URL: https://liftup-e7vw48uhv-tfows-projects.vercel.app
-- Env vars set: `DATABASE_URL`, `NODE_ENV=production`, `SHOPIFY_STORE`, `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`
-- Env vars needed (not yet set): `CRON_SECRET`, `LIFTUP_EMAIL`, `OUR_EMAIL`
-- Zoho env vars (values known — add to Vercel):
+- All env vars set in Vercel (Production + Preview):
+  `DATABASE_URL`, `NODE_ENV`, `SHOPIFY_STORE`, `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`,
+  `CRON_SECRET`, `LIFTUP_EMAIL`, `OUR_EMAIL`,
+  `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET`, `ZOHO_REFRESH_TOKEN`, `ZOHO_ACCOUNT_ID`, `ZOHO_REGION`,
+  `ZOHO_INVOICE_FOLDER_ID`, `ZOHO_PAYMENT_FOLDER_ID`, `ZOHO_CREDIT_FOLDER_ID`
+- Known values for reference:
+  - `LIFTUP_EMAIL` = `cyo@liftup.us`
+  - `OUR_EMAIL` = `info@rizeup.care` (Zoho sender; also CCed on all outbound reports)
   - `ZOHO_CLIENT_ID` = `1000.J3YLNWJX3B3X3O359GNNDYI2ZWU7NX`
   - `ZOHO_CLIENT_SECRET` = `e22f7f89ea5980f797d2e86543c082841804ff18f1`
   - `ZOHO_REFRESH_TOKEN` = `1000.1211d3194ec70a33e04e5a445cff1ffe.84b93dd1aa9b59840f7df6416d4bf1b0`
@@ -36,6 +41,7 @@ Sales commission tracking app. Tracks monthly invoices, orders, SKU configs, and
   - `ZOHO_INVOICE_FOLDER_ID` = `7267523000000148012`
   - `ZOHO_PAYMENT_FOLDER_ID` = `7267523000000264033`
   - `ZOHO_CREDIT_FOLDER_ID` = `7267523000000318023`
+- **Note**: when setting env vars via CLI, always use `printf '...' | vercel env add` — never `echo` (adds a trailing newline that breaks Zoho token refresh)
 - Deploy command: `vercel --prod` from repo root (Vercel CLI must be logged in)
 
 ### Render (Database)
@@ -80,7 +86,6 @@ New columns on `invoices`:
 - `email_line_items JSONB` — parsed line items array from their invoice email
 - `mismatch_notes TEXT` — human-readable discrepancy notes; null = no issues found
 
-Run: `DATABASE_URL="..." node backend/migrate_v3.js`
 
 ### Migration v2 (migrate_v2.sql — already applied 2026-04-27)
 New columns on `invoices`:
@@ -135,7 +140,12 @@ The invoice number is always auto-populated regardless of discrepancies; mismatc
 **Frontend display** (pending): show mismatch_notes as a warning card on the invoice Status tab when non-null.
 
 ### Cron schedule
-`vercel.json` runs `GET /api/email/poll` every 4 hours: `"0 */4 * * *"`
+| Path | Schedule | Purpose |
+|------|----------|---------|
+| `GET /api/cron/monthly-sync` | `0 8 1 * *` | 1st of month, 8 AM UTC — sync Shopify → send sales report + commission invoice to LiftUp (CC `OUR_EMAIL`) |
+| `GET /api/email/poll` | `0 */4 * * *` | Every 4 hours — poll Zoho folders for new inbound emails |
+
+Both require `Authorization: Bearer <CRON_SECRET>` (sent automatically by Vercel). To trigger manually use `vercel curl /api/email/poll` or run a local script.
 
 ---
 
@@ -178,61 +188,16 @@ The invoice number is always auto-populated regardless of discrepancies; mismatc
 
 ---
 
-## ⚙️ Outstanding setup tasks
+## ⚙️ Known issues / pending work
 
-### 1. Create Zoho Self-Client OAuth app (one-time)
+### Zoho attachment upload (PDF reports)
+Outbound emails currently send HTML body only. Attaching PDFs fails with "0 bytes" from Zoho's attachment pre-upload endpoint when using Node.js native `fetch` + `FormData`. The `fileName` query-parameter workaround resolves the filename issue but not the content. PDF generation itself works (pdfkit, ~3–10 KB). Needs further investigation — likely requires switching to a manual multipart body or `node-fetch`/`form-data` npm package.
 
-1. Log in to [https://api-console.zoho.com](https://api-console.zoho.com)
-2. Click **Add Client → Self Client**
-3. Note the **Client ID** and **Client Secret** — these become `ZOHO_CLIENT_ID` and `ZOHO_CLIENT_SECRET`
-4. In the Self Client tab, click **Generate Code**:
-   - **Scope**: `ZohoMail.messages.READ,ZohoMail.messages.UPDATE,ZohoMail.accounts.READ`
-   - **Time duration**: 10 minutes (you only need the code briefly)
-   - Copy the **grant code**
-5. Exchange the grant code for a refresh token (run once in terminal):
-   ```bash
-   curl -X POST "https://accounts.zoho.com/oauth/v2/token" \
-     -d "grant_type=authorization_code" \
-     -d "client_id=YOUR_CLIENT_ID" \
-     -d "client_secret=YOUR_CLIENT_SECRET" \
-     -d "redirect_uri=https://api-console.zoho.com/" \
-     -d "code=YOUR_GRANT_CODE"
-   ```
-   The response contains `"refresh_token"` — this never expires.
-6. Get your Zoho Mail account ID (run once):
-   ```bash
-   curl -H "Authorization: Zoho-oauthtoken YOUR_ACCESS_TOKEN" \
-     "https://mail.zoho.com/api/accounts"
-   ```
-   Note the `accountId` from the first account in the response.
+### Frontend — invoice mismatch display
+`invoices.mismatch_notes` is stored in the DB when a LiftUp invoice email is parsed, but no UI yet shows it on the invoice Status tab. Should display as a warning card when non-null.
 
-### 2. Set Vercel env vars
-In the Vercel dashboard under `tfows-projects/liftup → Settings → Environment Variables`, add:
-```
-CRON_SECRET=<choose a random secret string>
-LIFTUP_EMAIL=cyo@liftup.us
-OUR_EMAIL=info@rizeup.care   # Zoho Mail sender; brian@skystart.org is the CC/notification recipient
-ZOHO_CLIENT_ID=1000.J3YLNWJX3B3X3O359GNNDYI2ZWU7NX
-ZOHO_CLIENT_SECRET=e22f7f89ea5980f797d2e86543c082841804ff18f1
-ZOHO_REFRESH_TOKEN=1000.1211d3194ec70a33e04e5a445cff1ffe.84b93dd1aa9b59840f7df6416d4bf1b0
-ZOHO_ACCOUNT_ID=7267523000000008002
-ZOHO_REGION=com
-ZOHO_INVOICE_FOLDER_ID=7267523000000148012
-ZOHO_PAYMENT_FOLDER_ID=7267523000000264033
-ZOHO_CREDIT_FOLDER_ID=7267523000000318023
-```
-
-### 5. Redeploy to Vercel
-```bash
-npm install   # picks up pdfkit
-vercel --prod
-```
-
-### 6. Verify polling works
-```bash
-curl "https://liftup-e7vw48uhv-tfows-projects.vercel.app/api/email/poll?token=YOUR_CRON_SECRET"
-```
-Should return `{ "ok": true, "processed": 0, ... }` if folders are empty, or process any unread emails.
+### Render DB free tier expiry
+Upgrade `liftup-db` on Render before **2026-05-14** to avoid downtime.
 
 ---
 
