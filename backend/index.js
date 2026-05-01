@@ -432,7 +432,7 @@ app.get('/api/cron/monthly-sync', async (req, res) => {
 
     // 3 — Generate and send reports (only if LIFTUP_EMAIL is configured)
     const liftupEmail = process.env.LIFTUP_EMAIL;
-    const notifyCC    = 'brian@skystart.org';
+    const notifyCC    = process.env.OUR_EMAIL;
 
     if (liftupEmail) {
       const salesReport = await buildSalesReport(invoice, orders, month);
