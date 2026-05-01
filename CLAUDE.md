@@ -30,7 +30,7 @@ Sales commission tracking app. Tracks monthly invoices, orders, SKU configs, and
 - Zoho env vars (values known — add to Vercel):
   - `ZOHO_CLIENT_ID` = `1000.J3YLNWJX3B3X3O359GNNDYI2ZWU7NX`
   - `ZOHO_CLIENT_SECRET` = `e22f7f89ea5980f797d2e86543c082841804ff18f1`
-  - `ZOHO_REFRESH_TOKEN` = `1000.5ad6706fb8429173ccd558d621c68552.ce85bebdfb167525f52e33c12d24cb4d`
+  - `ZOHO_REFRESH_TOKEN` = `1000.1211d3194ec70a33e04e5a445cff1ffe.84b93dd1aa9b59840f7df6416d4bf1b0`
   - `ZOHO_ACCOUNT_ID` = `7267523000000008002`
   - `ZOHO_REGION` = `com`
   - `ZOHO_INVOICE_FOLDER_ID` = `7267523000000148012`
@@ -74,7 +74,7 @@ npm run dev            # runs on :5173, proxies /api to :3001
 - `orders` — line items per invoice with comm_flat/mkt/amz/total
 - `adjustments` — manual line item adjustments per invoice
 
-### Migration v3 (migrate_v3.sql — pending)
+### Migration v3 (migrate_v3.sql — applied 2026-04-29)
 New columns on `invoices`:
 - `email_invoice_total NUMERIC(12,2)` — total parsed from LiftUp's incoming invoice email
 - `email_line_items JSONB` — parsed line items array from their invoice email
@@ -211,10 +211,10 @@ In the Vercel dashboard under `tfows-projects/liftup → Settings → Environmen
 ```
 CRON_SECRET=<choose a random secret string>
 LIFTUP_EMAIL=cyo@liftup.us
-OUR_EMAIL=brian@skystart.org
+OUR_EMAIL=info@rizeup.care   # Zoho Mail sender; brian@skystart.org is the CC/notification recipient
 ZOHO_CLIENT_ID=1000.J3YLNWJX3B3X3O359GNNDYI2ZWU7NX
 ZOHO_CLIENT_SECRET=e22f7f89ea5980f797d2e86543c082841804ff18f1
-ZOHO_REFRESH_TOKEN=1000.5ad6706fb8429173ccd558d621c68552.ce85bebdfb167525f52e33c12d24cb4d
+ZOHO_REFRESH_TOKEN=1000.1211d3194ec70a33e04e5a445cff1ffe.84b93dd1aa9b59840f7df6416d4bf1b0
 ZOHO_ACCOUNT_ID=7267523000000008002
 ZOHO_REGION=com
 ZOHO_INVOICE_FOLDER_ID=7267523000000148012
@@ -222,13 +222,7 @@ ZOHO_PAYMENT_FOLDER_ID=7267523000000264033
 ZOHO_CREDIT_FOLDER_ID=7267523000000318023
 ```
 
-### 5. Run migration v3
-```bash
-cd backend
-DATABASE_URL="..." node migrate_v3.js
-```
-
-### 6. Place the logo
+### 5. Place the logo
 Copy the V1 Ventures logo PNG to `backend/assets/logo.png`. The reports fall back to a text header if this file is missing but will display the logo when present.
 
 ### 7. Redeploy to Vercel

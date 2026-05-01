@@ -158,7 +158,8 @@ async function uploadAttachment(filename, buffer, mimeType) {
   const formData = new FormData();
   formData.append('attach', new Blob([buffer], { type: mimeType }), filename);
 
-  const res = await fetch(`${MAIL_BASE()}/accounts/${accountId}/messages/attachments`, {
+  const uploadUrl = `${MAIL_BASE()}/accounts/${accountId}/messages/attachments?fileName=${encodeURIComponent(filename)}`;
+  const res = await fetch(uploadUrl, {
     method:  'POST',
     headers: { Authorization: `Zoho-oauthtoken ${token}` },
     body:    formData,
