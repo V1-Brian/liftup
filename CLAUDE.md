@@ -121,21 +121,18 @@ Emails land in a **Zoho Mail** inbox. The system polls two dedicated Zoho folder
 | Amazon Returns | `7267523000000422018` | (not yet wired up) |
 
 ### Email sources
-- **LiftUp invoices** — sent from QuickBooks (`@intuit.com` or `@quickbooks.com`). Subject typically: `"Invoice #1234 from LiftUp"`. Contains a payment link and a PDF attachment. Invoice number is extracted from the subject line or body text (no PDF parsing needed — QB embeds the number in plain text).
+- **LiftUp invoices** — sent from QuickBooks (`@intuit.com` or `@quickbooks.com`). Subject varies: `"Invoice - April sales 4 Raizer M 1 Carry case"`, `"Invoice - March Sales"`, etc. Body contains `BALANCE DUE $X,XXX.00` but **no invoice number** — the invoice number is only in the PDF attachment filename (`INVOICE_XXXX.pdf`) or behind the tracking redirect link. The system extracts the billing month from the subject line (e.g., "April" → `2026-04`) and records the email total for reconciliation; `invoices.invoice_number` must be entered manually.
 - **QB payment receipts** — also from QuickBooks. Subject: `"Payment receipt"` or similar. Contains amount paid, invoice number, payment date.
 - **Bank transfer notifications** — from the bank. Subject contains "deposit", "transfer received", "ACH", or "wire". Contains amount and date; no invoice reference (requires manual allocation via the commission payment modal).
 
 ### Invoice mismatch detection
-When a LiftUp invoice email is received, the system compares line-by-line against our orders:
-- **Total amount** — their parsed total vs. our `total_retail`
-- **Per-SKU qty** — their line item qty vs. our aggregated qty for that SKU
-- **Per-SKU amount** — their line total vs. our sale total for that SKU
-- **Shipping** — they break out shipping as a separate line; we include it in our total. This is the only *expected* difference and is noted but not flagged as an error.
-- **Unknown lines** — lines on their invoice not matched to any of our SKUs
-- **Missing lines** — SKUs in our records not present on their invoice
+When a LiftUp invoice email is received, the system compares against our records:
+- **Total amount** — their parsed `BALANCE DUE` total vs. our `total_retail`
+- **Per-SKU line items** — only checked when their email contains a parseable HTML table; QB invoice emails typically do not, so only the total is compared
+- **Shipping** — they break out shipping as a separate line; we include it in our total; noted but not flagged as an error
 
 Results are stored in `invoices.mismatch_notes` (newline-separated strings; null = clean).
-The invoice number is always auto-populated regardless of discrepancies; mismatches are flagged for review, not blocked.
+The `email_invoice_total` column is always updated; mismatches are flagged for review, not blocked.
 
 **Frontend display** (pending): show mismatch_notes as a warning card on the invoice Status tab when non-null.
 
@@ -185,6 +182,7 @@ Both require `Authorization: Bearer <CRON_SECRET>` (sent automatically by Vercel
 | GET | `/api/email/poll` | Poll both Zoho folders for new emails (cron every 4h + manual; requires `?token=CRON_SECRET`) |
 | GET | `/api/email/unmatched` | List unresolved unmatched emails |
 | POST | `/api/email/unmatched/:id/resolve` | Mark unmatched email resolved |
+| POST | `/api/email/unmatched/:id/reprocess` | Re-run the parser on a stored unmatched email (marks resolved on success) |
 
 ---
 
