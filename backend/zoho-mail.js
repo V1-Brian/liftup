@@ -96,8 +96,7 @@ async function fetchFolderMessages(folderId, limit = 50) {
   if (!accountId) throw new Error('ZOHO_ACCOUNT_ID env var not set');
 
   const data = await zohoGet(`/accounts/${accountId}/folders/${folderId}/messages`, {
-    status: 'unread',
-    limit:  String(limit),
+    limit: String(limit),
   });
 
   return (data.data || []).map(m => ({ ...m, folderId }));

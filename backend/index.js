@@ -799,10 +799,20 @@ app.get('/api/email/poll', async (req, res) => {
 
     if (!messages.length) return res.json({ ok: true, processed: 0, summary: [], results: [] });
 
-    const results     = [];
-    const toMarkRead  = [];
+    // Filter out already-processed messages
+    const ids = messages.map(m => m.messageId);
+    const { rows: seen } = await pool.query(
+      'SELECT message_id FROM processed_emails WHERE message_id = ANY($1)', [ids]
+    );
+    const seenSet = new Set(seen.map(r => r.message_id));
+    const newMsgs = messages.filter(m => !seenSet.has(String(m.messageId)));
 
-    for (const msg of messages) {
+    if (!newMsgs.length) return res.json({ ok: true, processed: 0, summary: ['all messages already processed'], results: [] });
+
+    const results    = [];
+    const toMarkRead = [];
+
+    for (const msg of newMsgs) {
       try {
         const { text, html } = await fetchMessageContent(msg.folderId, msg.messageId);
         const result = await processEmail(msg.subject || '', msg.fromAddress || '', text, html);
@@ -812,6 +822,11 @@ app.get('/api/email/poll', async (req, res) => {
         console.error(`Failed to process message ${msg.messageId}:`, e.message);
         results.push({ messageId: msg.messageId, subject: msg.subject, type: 'error', error: e.message });
       }
+      // Record as processed regardless of outcome so we don't retry endlessly
+      await pool.query(
+        'INSERT INTO processed_emails (message_id) VALUES ($1) ON CONFLICT DO NOTHING',
+        [String(msg.messageId)]
+      );
     }
 
     if (toMarkRead.length) await markAsRead(toMarkRead);
