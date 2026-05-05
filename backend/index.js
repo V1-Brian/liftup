@@ -613,20 +613,14 @@ async function processEmail(subject, fromAddr, text, html) {
 
   // ── LiftUp invoice email → auto-populate invoice_number ──────────────────
   if (emailType === 'liftup_invoice') {
-    const parsed = parseLiftUpInvoiceEmail(text, html);
-    if (!parsed) {
+    const parsed = parseLiftUpInvoiceEmail(text, html, subject);
+    if (!parsed || !parsed.billing_month) {
+      const reason = !parsed ? 'unparseable' : 'no_billing_month';
       await pool.query(
-        `INSERT INTO unmatched_emails (subject, from_addr, text_body, reason) VALUES ($1,$2,$3,'no_invoice_number')`,
-        [subject, fromAddr, text]
+        `INSERT INTO unmatched_emails (subject, from_addr, text_body, reason) VALUES ($1,$2,$3,$4)`,
+        [subject, fromAddr, text, reason]
       );
-      return { type: 'unmatched', reason: 'no_invoice_number' };
-    }
-    if (!parsed.billing_month) {
-      await pool.query(
-        `INSERT INTO unmatched_emails (subject, from_addr, text_body, reason) VALUES ($1,$2,$3,'no_billing_month')`,
-        [subject, fromAddr, text]
-      );
-      return { type: 'unmatched', reason: 'no_billing_month' };
+      return { type: 'unmatched', reason };
     }
     const { rows: inv } = await pool.query(
       `SELECT i.*, COALESCE(SUM(a.amount),0) AS adj_sum
@@ -659,22 +653,20 @@ async function processEmail(subject, fromAddr, text, html) {
       parsed.amount
     );
 
-    await pool.query(
-      `UPDATE invoices
-       SET invoice_number=$1,
-           email_invoice_total=$2,
-           email_line_items=$3,
-           mismatch_notes=$4,
-           updated_at=NOW()
-       WHERE id=$5`,
-      [
-        parsed.invoice_number,
-        parsed.amount,
-        JSON.stringify(parsed.line_items || []),
-        mismatchNotes.length ? mismatchNotes.join('\n') : null,
-        invoice.id,
-      ]
-    );
+    const mismatchStr = mismatchNotes.length ? mismatchNotes.join('\n') : null;
+    if (parsed.invoice_number) {
+      await pool.query(
+        `UPDATE invoices SET invoice_number=$1, email_invoice_total=$2,
+            email_line_items=$3, mismatch_notes=$4, updated_at=NOW() WHERE id=$5`,
+        [parsed.invoice_number, parsed.amount, JSON.stringify(parsed.line_items || []), mismatchStr, invoice.id]
+      );
+    } else {
+      await pool.query(
+        `UPDATE invoices SET email_invoice_total=$1,
+            email_line_items=$2, mismatch_notes=$3, updated_at=NOW() WHERE id=$4`,
+        [parsed.amount, JSON.stringify(parsed.line_items || []), mismatchStr, invoice.id]
+      );
+    }
 
     return {
       type:           'liftup_invoice',
@@ -860,6 +852,22 @@ app.post('/api/email/unmatched/:id/resolve', async (req, res) => {
   try {
     await pool.query('UPDATE unmatched_emails SET resolved=TRUE WHERE id=$1', [req.params.id]);
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Re-attempt processing of a stored unmatched email using the current parser logic.
+app.post('/api/email/unmatched/:id/reprocess', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT * FROM unmatched_emails WHERE id=$1', [req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    const em = rows[0];
+    const result = await processEmail(em.subject || '', em.from_addr || '', em.text_body || '', '');
+    if (result.type !== 'unmatched') {
+      await pool.query('UPDATE unmatched_emails SET resolved=TRUE WHERE id=$1', [em.id]);
+    }
+    res.json({ ok: true, result });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

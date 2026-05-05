@@ -44,6 +44,24 @@ function extractMonth(text) {
 }
 
 /**
+ * Like extractMonth but falls back to inferring the year when only a month name is present.
+ * A month that's numerically greater than the current month is assumed to be last year.
+ */
+function extractMonthWithFallback(text) {
+  const m = extractMonth(text);
+  if (m) return m;
+
+  const nameMatch = text.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\b/i);
+  if (!nameMatch) return null;
+
+  const mon = MONTH_NAMES[nameMatch[1].toLowerCase()];
+  const now  = new Date();
+  let year   = now.getFullYear();
+  if (parseInt(mon, 10) > now.getMonth() + 1) year -= 1;
+  return `${year}-${mon}`;
+}
+
+/**
  * Detect which type of email this is based on subject + sender.
  * Returns: 'liftup_invoice' | 'qb_payment' | 'bank_transfer' | 'unknown'
  */
@@ -118,21 +136,30 @@ function parseLineItemsFromHTML(html = '') {
 /**
  * Parse LiftUp's QuickBooks invoice email.
  * Returns { invoice_number, billing_month, amount, line_items, shipping_amount } or null.
+ *
+ * LiftUp's QB emails often omit an invoice number in the body (only "BALANCE DUE $X").
+ * invoice_number will be null in that case — callers should not require it.
+ * billing_month is extracted from the subject line when absent from the body.
  */
-function parseLiftUpInvoiceEmail(text = '', html = '') {
+function parseLiftUpInvoiceEmail(text = '', html = '', subject = '') {
   const body = text || html.replace(/<[^>]+>/g, ' ');
+  // Prepend subject so month and invoice-number regexes can match against it
+  const fullText = subject ? `${subject} ${body}` : body;
 
-  // QB invoice subject is typically "Invoice #INV-2026-03 from LiftUp"
-  // Body also contains "Invoice No." or "Invoice #"
-  const invMatch = body.match(/invoice\s*(?:no\.?|#|number)?[:\s]+([A-Z0-9][A-Z0-9\-\/]{2,})/i);
-  if (!invMatch) return null;
-  const invoice_number = invMatch[1].trim();
+  // Invoice number — requires explicit "Inv# 3316", "Invoice No. 3316", "Invoice #3316"
+  // The keyword (no./#/number) is required to avoid false matches on "invoice is ready"
+  const invMatch = fullText.match(/\binv(?:oice)?\s*(?:no\.?|#|number)\s*[:\s]*([A-Z0-9][A-Z0-9\-\/]{2,})/i);
+  const invoice_number = invMatch ? invMatch[1].trim() : null;
 
-  // Total amount
-  const amtMatch = body.match(/(?:total|amount\s*due|balance\s*due|invoice\s*total)[:\s]+\$?\s*([\d,]+\.\d{2})/i);
+  // Total amount — "BALANCE DUE $7,920.00", "BALANCE DUE $USD 13,211.00", "Total: $X"
+  const amtMatch = fullText.match(/(?:balance\s*due|total|amount\s*due|invoice\s*total)[:\s]+(?:\$\s*USD\s*|\$\s*)?([0-9,]+\.\d{2})/i);
   const amount   = amtMatch ? parseFloat(amtMatch[1].replace(/,/g, '')) : null;
 
-  const billing_month = extractMonth(body);
+  // Billing month — try full text (subject included); fall back to month-name-only inference
+  const billing_month = extractMonthWithFallback(fullText);
+
+  // Nothing useful parsed at all — give up
+  if (!amount && !billing_month) return null;
 
   // Line items (best-effort from HTML)
   const line_items     = parseLineItemsFromHTML(html);
@@ -221,6 +248,12 @@ function compareInvoices(ourOrders, theirItems, ourTotal, theirTotal) {
 
   const theirProductLines = theirItems.filter(i => !i.isShipping);
   const matchedSkus       = new Set();
+
+  // Skip line-by-line checks when no line items were parsed from the email
+  // (suppresses false "missing SKU" notes for emails without structured tables)
+  if (!theirProductLines.length) {
+    return notes; // only total-level check above applies
+  }
 
   for (const theirLine of theirProductLines) {
     // Match by SKU code or product name substring
