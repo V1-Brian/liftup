@@ -95,8 +95,11 @@ async function fetchFolderMessages(folderId, limit = 50) {
   const accountId = process.env.ZOHO_ACCOUNT_ID;
   if (!accountId) throw new Error('ZOHO_ACCOUNT_ID env var not set');
 
-  const data = await zohoGet(`/accounts/${accountId}/folders/${folderId}/messages`, {
-    limit: String(limit),
+  // /messages/view supports folderId filter and works for both system and custom folders.
+  // The older /folders/{id}/messages endpoint returns INVALID_METHOD in this environment.
+  const data = await zohoGet(`/accounts/${accountId}/messages/view`, {
+    folderId: String(folderId),
+    limit:    String(limit),
   });
 
   return (data.data || []).map(m => ({ ...m, folderId }));
