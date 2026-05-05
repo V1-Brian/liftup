@@ -24,7 +24,7 @@ Sales commission tracking app. Tracks monthly invoices, orders, SKU configs, and
 ### Vercel
 - Project: `tfows-projects/liftup`
 - Dashboard: https://vercel.com/tfows-projects/liftup
-- Latest production URL: https://liftup-e7vw48uhv-tfows-projects.vercel.app
+- Latest production URL: https://liftup-cj5b84t40-tfows-projects.vercel.app
 - All env vars set in Vercel (Production + Preview):
   `DATABASE_URL`, `NODE_ENV`, `SHOPIFY_STORE`, `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`,
   `CRON_SECRET`, `LIFTUP_EMAIL`, `OUR_EMAIL`,
@@ -86,6 +86,12 @@ New columns on `invoices`:
 - `email_line_items JSONB` — parsed line items array from their invoice email
 - `mismatch_notes TEXT` — human-readable discrepancy notes; null = no issues found
 
+
+### Migration v4 (migrate_v4.sql — applied 2026-05-05)
+New table:
+- `processed_emails` — tracks message IDs already processed by the poll; prevents reprocessing when emails are re-read or folder-fetched without unread filter
+
+Run: `DATABASE_URL="..." node migrate_v4.js`
 
 ### Migration v2 (migrate_v2.sql — already applied 2026-04-27)
 New columns on `invoices`:
@@ -151,8 +157,8 @@ Both require `Authorization: Bearer <CRON_SECRET>` (sent automatically by Vercel
 - `backend/migrate_v2.sql` — v2 schema additions (payments, credits, unmatched_emails)
 - `backend/commission.js` — `calcCommission(sku, price, channel) → {flat, mkt, amz, total}`
 - `backend/shopify.js` — Shopify OAuth token exchange + paginated order fetch + channel detection
-- `backend/zoho-mail.js` — Zoho Mail API client: `getAccessToken`, `fetchUnreadMessages`, `fetchMessageContent`, `markAsRead`, `sendEmail`, `uploadAttachment`; in-memory token cache; requires ZOHO_* + OUR_EMAIL env vars
-- `backend/email-parser.js` — `parseLiftUpInvoiceEmail` (extracts invoice number, line items, shipping amount), `parseQBPaymentEmail`, `parseBankTransferEmail`, `detectEmailType`, `compareInvoices` (line-by-line discrepancy check)
+- `backend/zoho-mail.js` — Zoho Mail API client: `fetchFolderMessages` (uses `/messages/view?folderId=X` — the only working folder-fetch endpoint in this env), `fetchUnreadMessages`, `fetchMessageContent`, `markAsRead`, `sendEmail`, `uploadAttachment`; in-memory token cache; requires ZOHO_* + OUR_EMAIL env vars
+- `backend/email-parser.js` — `parseLiftUpInvoiceEmail(text, html, subject)` (extracts billing_month from subject when absent from body; invoice_number may be null since QB emails don't embed it), `parseQBPaymentEmail`, `parseBankTransferEmail`, `detectEmailType`, `compareInvoices` (total-level check; line-item check skipped when no parsed line items)
 - `backend/report-generator.js` — `buildSalesReport` and `buildCommissionInvoice`; each returns `{ subject, html, pdfBuffer, filename }`; uses pdfkit + V1 Ventures logo from `backend/assets/logo.png`
 - `backend/assets/logo.png` — V1 Ventures logo; used in PDF report headers
 - `frontend/src/lib/api.js` — all API calls
@@ -219,12 +225,13 @@ Credits start as `status='open'`. When a subsequent invoice is saved, all open c
 
 ## ✅ Test cases to verify after deployment
 
-### Feature 1 — LiftUp invoice email → auto-populate invoice number
+### Feature 1 — LiftUp invoice email → amount reconciliation
 1. Ensure a LiftUp QB invoice email lands in the invoices Zoho folder
-2. Trigger poll (`GET /api/email/poll?token=...`); confirm `invoices.invoice_number` is updated on the matching month
-3. If parsed invoice total differs from system-calculated `total_retail`: confirm a mismatch note is recorded and the Dashboard warning badge appears
-4. Test with an email where the billing month cannot be determined → confirm row in `unmatched_emails`; Dashboard warning badge appears
+2. Trigger poll (`GET /api/email/poll?token=...`); confirm `invoices.email_invoice_total` is updated on the matching month; `invoice_number` is NOT auto-populated (QB emails don't contain it — enter manually)
+3. If parsed total differs from `total_retail`: confirm a mismatch note is recorded in `mismatch_notes`
+4. Test with an email where billing month cannot be determined → confirm row in `unmatched_emails`
 5. Test with a billing month that has no invoice in the system → confirm `unmatched_emails` row with `reason='no_matching_invoice'`
+6. To replay a stored unmatched email after a parser fix: `POST /api/email/unmatched/:id/reprocess`
 
 ### Feature 2a — QB payment receipt email → record payment to LiftUp
 1. Ensure a QB payment receipt lands in the payment confirmations Zoho folder
