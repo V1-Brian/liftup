@@ -7,6 +7,7 @@ const { getAccessToken, fetchOrdersForMonth, processOrders } = require('./shopif
 const { detectEmailType, parseLiftUpInvoiceEmail, parseQBPaymentEmail, parseBankTransferEmail, compareInvoices } = require('./email-parser');
 const { fetchFolderMessages, fetchUnreadMessages, fetchMessageContent, markAsRead, sendEmail } = require('./zoho-mail');
 const { buildSalesReport, buildCommissionInvoice } = require('./report-generator');
+const { runBlogPost } = require('./blog-generator');
 
 const app  = express();
 const pool = new Pool({
@@ -869,6 +870,21 @@ app.post('/api/email/unmatched/:id/reprocess', async (req, res) => {
     }
     res.json({ ok: true, result });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Vercel cron — GET /api/cron/blog-post (runs every Monday at 10:00 UTC)
+app.get('/api/cron/blog-post', async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  if (secret && req.headers.authorization !== `Bearer ${secret}`) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    const result = await runBlogPost(pool);
+    res.json(result);
+  } catch (e) {
+    console.error('[blog-cron] error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 if (require.main === module) {
