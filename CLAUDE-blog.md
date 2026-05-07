@@ -107,11 +107,11 @@ Currently configured to **auto-publish** (`PUBLISH_AS_DRAFT = false` in `blog-ge
 - [x] Install `@anthropic-ai/sdk` in root `package.json`
 - [x] Create `backend/blog-topics.js` with full keyword list (40 topics)
 - [x] Create `backend/migrate_blog.js`
-- [ ] Run `migrate_blog.js` against Render DB
+- [ ] Run `migrate_blog.js` against Render DB (`blog_posts_log` table does not yet exist)
 - [x] Create `backend/blog-generator.js`
 - [x] Add `/api/cron/blog-post` route to `backend/index.js`
 - [x] Add cron entry to `vercel.json`
-- [ ] Deploy to Vercel (`vercel --prod`)
+- [x] Deploy to Vercel (deployed in commit `54a110a`)
 - [ ] Trigger manually to verify end-to-end: `vercel curl /api/cron/blog-post`
 - [ ] Confirm post appears in Shopify admin
 

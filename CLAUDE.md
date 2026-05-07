@@ -30,6 +30,7 @@ Sales commission tracking app. Tracks monthly invoices, orders, SKU configs, and
   `CRON_SECRET`, `LIFTUP_EMAIL`, `OUR_EMAIL`,
   `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET`, `ZOHO_REFRESH_TOKEN`, `ZOHO_ACCOUNT_ID`, `ZOHO_REGION`,
   `ZOHO_INVOICE_FOLDER_ID`, `ZOHO_PAYMENT_FOLDER_ID`, `ZOHO_CREDIT_FOLDER_ID`
+- **Still needed** (blog module): `ANTHROPIC_API_KEY`, `SHOPIFY_BLOG_ID`
 - Known values for reference:
   - `LIFTUP_EMAIL` = `cyo@liftup.us`
   - `OUR_EMAIL` = `info@rizeup.care` (Zoho sender; also CCed on all outbound reports)
@@ -80,20 +81,7 @@ npm run dev            # runs on :5173, proxies /api to :3001
 - `orders` — line items per invoice with comm_flat/mkt/amz/total
 - `adjustments` — manual line item adjustments per invoice
 
-### Migration v3 (migrate_v3.sql — applied 2026-04-29)
-New columns on `invoices`:
-- `email_invoice_total NUMERIC(12,2)` — total parsed from LiftUp's incoming invoice email
-- `email_line_items JSONB` — parsed line items array from their invoice email
-- `mismatch_notes TEXT` — human-readable discrepancy notes; null = no issues found
-
-
-### Migration v4 (migrate_v4.sql — applied 2026-05-05)
-New table:
-- `processed_emails` — tracks message IDs already processed by the poll; prevents reprocessing when emails are re-read or folder-fetched without unread filter
-
-Run: `DATABASE_URL="..." node migrate_v4.js`
-
-### Migration v2 (migrate_v2.sql — already applied 2026-04-27)
+### Migration v2 (migrate_v2.sql — applied 2026-04-27)
 New columns on `invoices`:
 - `mfr_amount_paid NUMERIC(12,2)` — cumulative amount paid to LiftUp
 - `commission_amount_received NUMERIC(12,2)` — cumulative commission received from LiftUp
@@ -104,12 +92,23 @@ New tables:
 - `credits` — auto-generated when an order has status `'after'`; `credit_type`: `'retail'` (reduces what we owe LiftUp) or `'commission'` (reduces what LiftUp owes us); `status`: `'open'` or `'applied'`
 - `unmatched_emails` — inbound emails that could not be auto-matched; surfaced on Dashboard as a warning badge
 
-Run migrations:
-```bash
-cd backend
-DATABASE_URL="..." node migrate.js       # initial schema (already done)
-DATABASE_URL="..." node migrate_v2.js    # v2 tables (already done)
-```
+### Migration v3 (migrate_v3.sql — applied 2026-04-29)
+New columns on `invoices`:
+- `email_invoice_total NUMERIC(12,2)` — total parsed from LiftUp's incoming invoice email
+- `email_line_items JSONB` — parsed line items array from their invoice email
+- `mismatch_notes TEXT` — human-readable discrepancy notes; null = no issues found
+
+### Migration v4 (migrate_v4.sql — applied 2026-05-05)
+New table:
+- `processed_emails` — tracks message IDs already processed by the poll; prevents reprocessing when emails are re-read or folder-fetched without unread filter
+
+Run: `DATABASE_URL="..." node migrate_v4.js`
+
+### Migration blog (migrate_blog.js — **NOT YET RUN**)
+New table:
+- `blog_posts_log` — tracks weekly auto-generated blog posts; prevents topic repeats
+
+Run: `DATABASE_URL="..." node backend/migrate_blog.js`
 
 ---
 
@@ -147,6 +146,7 @@ The `email_invoice_total` column is always updated; mismatches are flagged for r
 |------|----------|---------|
 | `GET /api/cron/monthly-sync` | `0 8 1 * *` | 1st of month, 8 AM UTC — sync Shopify → send sales report + commission invoice to LiftUp (CC `OUR_EMAIL`) |
 | `GET /api/email/poll` | `0 */4 * * *` | Every 4 hours — poll Zoho folders for new inbound emails |
+| `GET /api/cron/blog-post` | `0 10 * * 1` | Every Monday 10 AM UTC — generate + publish one SEO blog post to Shopify |
 
 Both require `Authorization: Bearer <CRON_SECRET>` (sent automatically by Vercel). To trigger manually use `vercel curl /api/email/poll` or run a local script.
 
@@ -161,6 +161,9 @@ Both require `Authorization: Bearer <CRON_SECRET>` (sent automatically by Vercel
 - `backend/email-parser.js` — `parseLiftUpInvoiceEmail(text, html, subject)` (extracts billing_month from subject when absent from body; invoice_number may be null since QB emails don't embed it), `parseQBPaymentEmail`, `parseBankTransferEmail`, `detectEmailType`, `compareInvoices` (total-level check; line-item check skipped when no parsed line items)
 - `backend/report-generator.js` — `buildSalesReport` and `buildCommissionInvoice`; each returns `{ subject, html, pdfBuffer, filename }`; uses pdfkit + V1 Ventures logo from `backend/assets/logo.png`
 - `backend/assets/logo.png` — V1 Ventures logo; used in PDF report headers
+- `backend/blog-generator.js` — `generateAndPublishBlogPost()`: picks next topic from `blog-topics.js`, calls Claude API, posts to Shopify Articles API, logs to `blog_posts_log`
+- `backend/blog-topics.js` — ordered array of 40 SEO keyword topics (four content pillars)
+- `backend/migrate_blog.js` — creates `blog_posts_log` table (**not yet run against Render DB**)
 - `frontend/src/lib/api.js` — all API calls
 - `frontend/src/lib/utils.js` — `calcCommission`, `fmt`, `fmtMonth`, `STATUS_OPTIONS`, `parseShopifyCSV`
 - `frontend/src/pages/` — Dashboard, InvoicePage, SkuPage, HistoryPage, CreditsPage
@@ -182,6 +185,7 @@ Both require `Authorization: Bearer <CRON_SECRET>` (sent automatically by Vercel
 | GET | `/api/invoices/payment-status` | All invoices with net_owed_to_liftup, used by allocation modal |
 | POST | `/api/sync/:month` | Manual Shopify sync |
 | GET | `/api/cron/monthly-sync` | Vercel cron — runs 1st of month at 08:00 UTC |
+| GET | `/api/cron/blog-post` | Vercel cron — runs every Monday at 10:00 UTC; generates + publishes one blog post |
 | GET | `/api/payments` | List payments (optional `?type=commission`) |
 | POST | `/api/payments` | Record/allocate a payment |
 | GET | `/api/credits` | Returns `{ open: [...], applied: [...] }` |
@@ -199,6 +203,13 @@ Outbound emails currently send HTML body only. Attaching PDFs fails with "0 byte
 
 ### Frontend — invoice mismatch display
 `invoices.mismatch_notes` is stored in the DB when a LiftUp invoice email is parsed, but no UI yet shows it on the invoice Status tab. Should display as a warning card when non-null.
+
+### Blog module — setup incomplete
+The blog cron is deployed but not yet live. Before it can run:
+1. Add `ANTHROPIC_API_KEY` and `SHOPIFY_BLOG_ID` to Vercel env vars
+2. Add `write_content` scope to the Shopify custom app (Settings → Apps → Develop apps)
+3. Run `DATABASE_URL="..." node backend/migrate_blog.js` to create `blog_posts_log` table
+4. Trigger once manually to verify: `vercel curl /api/cron/blog-post`
 
 ### Render DB free tier expiry
 Upgrade `liftup-db` on Render before **2026-05-14** to avoid downtime.
