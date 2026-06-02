@@ -30,7 +30,7 @@ Sales commission tracking app. Tracks monthly invoices, orders, SKU configs, and
   `CRON_SECRET`, `LIFTUP_EMAIL`, `OUR_EMAIL`,
   `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET`, `ZOHO_REFRESH_TOKEN`, `ZOHO_ACCOUNT_ID`, `ZOHO_REGION`,
   `ZOHO_INVOICE_FOLDER_ID`, `ZOHO_PAYMENT_FOLDER_ID`, `ZOHO_CREDIT_FOLDER_ID`
-- **Still needed** (blog module): `ANTHROPIC_API_KEY`, `SHOPIFY_BLOG_ID`
+- **Also set** (blog module): `ANTHROPIC_API_KEY`, `SHOPIFY_BLOG_ID_HOME_CARE`, `SHOPIFY_BLOG_ID_PROFESSIONAL_CARE`, `SHOPIFY_BLOG_ID_BUYERSGUIDE`
 - Known values for reference:
   - `LIFTUP_EMAIL` = `cyo@liftup.us`
   - `OUR_EMAIL` = `info@rizeup.care` (Zoho sender; also CCed on all outbound reports)

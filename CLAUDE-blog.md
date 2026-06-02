@@ -32,23 +32,33 @@ Housed in the same `liftup` repo as the invoice/commission app because Shopify c
 
 | Var | Where set | Notes |
 |-----|-----------|-------|
-| `ANTHROPIC_API_KEY` | Vercel (Production + Preview) | New — must be added before first deploy |
-| `SHOPIFY_BLOG_ID` | Vercel (Production + Preview) | New — numeric ID of the Shopify blog to post to. Find it via `GET /admin/api/2024-01/blogs.json` or Shopify admin URL |
+| `ANTHROPIC_API_KEY` | Vercel ✅ set | Claude API key for blog generation |
+| `SHOPIFY_BLOG_ID_HOME_CARE` | Vercel ✅ set | Numeric ID for the Home Care blog |
+| `SHOPIFY_BLOG_ID_PROFESSIONAL_CARE` | Vercel ✅ set | Numeric ID for the Professional Care blog |
+| `SHOPIFY_BLOG_ID_BUYERSGUIDE` | Vercel ✅ set | Numeric ID for the Buyer's Guide blog (formerly "Informative") |
 | `SHOPIFY_STORE` | Already set | e.g. `yourstore.myshopify.com` |
 | `SHOPIFY_CLIENT_ID` | Already set | |
-| `SHOPIFY_CLIENT_SECRET` | Already set | |
+| `SHOPIFY_CLIENT_SECRET` | Already set | Access token unchanged after `write_content` scope added |
 | `CRON_SECRET` | Already set | Reused for blog cron auth |
+
+## Blog strategy
+
+Four blogs exist on the Shopify storefront. Auto-generation posts to three; **News is reserved for actual announcements only**.
+
+| Blog | Env var | Content pillar |
+|------|---------|----------------|
+| Home Care | `SHOPIFY_BLOG_ID_HOME_CARE` | Caregiver pain-points, fall recovery, lifting at home |
+| Professional Care | `SHOPIFY_BLOG_ID_PROFESSIONAL_CARE` | Medical/facility-focused, professional caregiver guides |
+| Buyer's Guide | `SHOPIFY_BLOG_ID_BUYERSGUIDE` | Product comparisons, competitor captures, education |
+| News | — | Manual posts only — do not auto-post here |
+
+Dates are intentionally hidden on blog pages (evergreen content strategy). Do not re-enable.
 
 ---
 
 ## Shopify app scope requirement
 
-The existing Shopify custom app was created with order-reading scopes. Before blog posts can be created, **`write_content` scope must be added**:
-
-1. Shopify Admin → Settings → Apps and sales channels → Develop apps
-2. Select the existing app → Configuration tab
-3. Add `write_content` to Admin API access scopes
-4. Save and reinstall the app (generates a new access token — update `SHOPIFY_CLIENT_SECRET` in Vercel if it changes)
+✅ **`write_content` scope has been added.** Access token did not change after reinstall.
 
 ---
 
@@ -101,19 +111,22 @@ Currently configured to **auto-publish** (`PUBLISH_AS_DRAFT = false` in `blog-ge
 
 ## ✅ Build checklist
 
-- [ ] Add `ANTHROPIC_API_KEY` to Vercel env vars (Production + Preview)
-- [ ] Add `SHOPIFY_BLOG_ID` to Vercel env vars (Production + Preview)
-- [ ] Add `write_content` scope to Shopify custom app
+- [x] Add `ANTHROPIC_API_KEY` to Vercel env vars (Production + Preview)
+- [x] Add blog ID env vars to Vercel: `SHOPIFY_BLOG_ID_HOME_CARE`, `SHOPIFY_BLOG_ID_PROFESSIONAL_CARE`, `SHOPIFY_BLOG_ID_BUYERSGUIDE`
+- [x] Add `write_content` scope to Shopify custom app
 - [x] Install `@anthropic-ai/sdk` in root `package.json`
 - [x] Create `backend/blog-topics.js` with full keyword list (40 topics)
 - [x] Create `backend/migrate_blog.js`
-- [ ] Run `migrate_blog.js` against Render DB (`blog_posts_log` table does not yet exist)
-- [x] Create `backend/blog-generator.js`
-- [x] Add `/api/cron/blog-post` route to `backend/index.js`
-- [x] Add cron entry to `vercel.json`
-- [x] Deploy to Vercel (deployed in commit `54a110a`)
+- [ ] **RUN FIRST**: `migrate_blog.js` against Render DB — `blog_posts_log` table does not yet exist
+  ```bash
+  cd backend
+  DATABASE_URL="postgresql://liftup_user:g0z2pq31zdbRrJTkfnAHTCdfCJ7JSmNN@dpg-d7f908n7f7vs739rfh30-a.oregon-postgres.render.com:5432/liftup_31bl" node migrate_blog.js
+  ```
+- [ ] **THEN**: Update `backend/blog-topics.js` — add `blog` field to each topic (`'home_care'` | `'professional_care'` | `'buyers_guide'`)
+- [ ] **THEN**: Update `backend/blog-generator.js` — replace single `SHOPIFY_BLOG_ID` with named blog ID lookup map
+- [ ] Deploy to Vercel after code updates
 - [ ] Trigger manually to verify end-to-end: `vercel curl /api/cron/blog-post`
-- [ ] Confirm post appears in Shopify admin
+- [ ] Confirm post appears in correct Shopify blog
 
 ## ⚙️ Known issues / pending
 
