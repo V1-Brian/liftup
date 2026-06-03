@@ -4,6 +4,15 @@ const TOPICS = require('./blog-topics');
 const SHOPIFY_API_VERSION = '2024-01';
 const PUBLISH_AS_DRAFT = false; // set to true to review before going live
 
+// Product URLs — used in the prompt so Claude links to real pages
+const PRODUCTS = {
+  manual:    'https://rizeup.care/products/raizer-m-lifting-chair-bonus-raizer-m-headrest',
+  electric:  'https://rizeup.care/products/raizer-2-battery-operated-lifting-chair',
+  refurb:    'https://rizeup.care/products/raizer-2-battery-operated-lifting-chair-refurbished-open-box',
+  previous:  'https://rizeup.care/products/raizer-i-battery-operated-lifting-chair-refurbished-open-box',
+  catalog:   'https://rizeup.care/collections/home-care',
+};
+
 // Maps topic.blog → Vercel env var name
 const BLOG_ID_ENV = {
   home_care:         'SHOPIFY_BLOG_ID_HOME_CARE',
@@ -111,10 +120,12 @@ function buildPrompt(topic) {
 
 What makes LiftUp unique: the patient does NOT need any strength or ability to move. The device is assembled around the patient while they lie flat, then lifts them to a seated or standing position. This is fundamentally different from most lifts that require the patient to pivot or assist.
 
-Product lineup:
-- Manual crank floor lift: ~$1,995 (caregiver operates a hand crank)
-- Electronic floor lift: ~$5,495 (motorized, one-button operation)
-- Refurbished electronic floor lift: ~$4,495
+Product lineup (all include a 2-year warranty):
+- Manual Raizer M floor lift: ~$1,995 — ${PRODUCTS.manual}
+- Raizer 2 electronic floor lift: ~$5,495 — ${PRODUCTS.electric}
+- Raizer 2 refurbished electronic floor lift: ~$4,495 — ${PRODUCTS.refurb}
+- Raizer I refurbished electronic floor lift (previous generation): — ${PRODUCTS.previous}
+- Full catalog: ${PRODUCTS.catalog}
 
 Primary competitor: Vocic / Maidesite (sold on Amazon) — budget options, require more patient participation.
 
@@ -140,6 +151,14 @@ FORMATTING RULES — follow exactly:
 - Do NOT wrap the HTML in markdown code fences (no \`\`\`html ... \`\`\`).
 - Place the meta description at the very end in this exact format:
 <!-- meta: YOUR META DESCRIPTION HERE -->
+
+LINK RULES — follow exactly:
+- When mentioning any of our products, link using the exact URLs listed above. Use descriptive anchor text (e.g. "Raizer M manual floor lift"), never bare URLs.
+- For the closing call-to-action, link to the catalog page: ${PRODUCTS.catalog}
+- You may link to authoritative external sources for statistics or medical facts ONLY: cdc.gov, nia.nih.gov, mayoclinic.org, aarp.org, or pubmed.ncbi.nlm.nih.gov. Only link to a real, known page — do not invent URLs.
+- NEVER link to Amazon, Walmart, eBay, or any other retailer or e-commerce site.
+- NEVER link to competitor products (Vocic, Maidesite, or similar).
+- If no appropriate link exists, leave the text unlinked — do not invent a URL.
 
 TONE: Warm, knowledgeable, and practical. Written for caregivers and family members, not medical professionals. Avoid jargon. Aim for a 7th–8th grade reading level.
 
