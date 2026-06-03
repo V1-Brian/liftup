@@ -879,7 +879,8 @@ app.get('/api/cron/blog-post', async (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   try {
-    const result = await runBlogPost(pool);
+    const forceIndex = req.query.topic !== undefined ? parseInt(req.query.topic, 10) : null;
+    const result = await runBlogPost(pool, forceIndex);
     res.json(result);
   } catch (e) {
     console.error('[blog-cron] error:', e.message);

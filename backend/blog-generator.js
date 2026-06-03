@@ -170,8 +170,8 @@ async function pickNextTopic(pool) {
   return (last + 1) % TOPICS.length;
 }
 
-async function runBlogPost(pool) {
-  const topicIndex = await pickNextTopic(pool);
+async function runBlogPost(pool, forceTopicIndex = null) {
+  const topicIndex = forceTopicIndex !== null ? forceTopicIndex : await pickNextTopic(pool);
   const topic      = TOPICS[topicIndex];
 
   console.log(`[blog] topic ${topicIndex} (${topic.blog}): "${topic.keyword}"`);
