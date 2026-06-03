@@ -19,6 +19,41 @@ function getBlogId(blogKey) {
   return id;
 }
 
+// ── HTML cleanup ─────────────────────────────────────────────────────────────
+
+// Strip markdown code fences Claude sometimes adds around the HTML
+function cleanHtml(raw) {
+  return raw.replace(/^```html\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+}
+
+// ── Unsplash image ────────────────────────────────────────────────────────────
+
+async function fetchUnsplashImage(keyword) {
+  const key = process.env.UNSPLASH_ACCESS_KEY;
+  if (!key) return null;
+  try {
+    const res = await fetch(
+      `https://api.unsplash.com/search/photos?query=${encodeURIComponent(keyword)}&per_page=1&orientation=landscape`,
+      { headers: { Authorization: `Client-ID ${key}` } }
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    const photo = data.results?.[0];
+    if (!photo) return null;
+    return {
+      url:    photo.urls.regular,
+      alt:    photo.alt_description || keyword,
+      credit: `Photo by <a href="${photo.user.links.html}?utm_source=rizeup&utm_medium=referral" target="_blank" rel="noopener">${photo.user.name}</a> on <a href="https://unsplash.com/?utm_source=rizeup&utm_medium=referral" target="_blank" rel="noopener">Unsplash</a>`,
+    };
+  } catch {
+    return null; // non-fatal — post publishes without image
+  }
+}
+
+function buildHeroImageHtml(image) {
+  return `<figure style="margin:0 0 2em 0"><img src="${image.url}" alt="${image.alt}" style="width:100%;height:auto;border-radius:6px;display:block"><figcaption style="font-size:0.8em;color:#888;text-align:right;margin-top:4px">${image.credit}</figcaption></figure>`;
+}
+
 // ── Shopify helpers ──────────────────────────────────────────────────────────
 
 async function getShopifyToken() {
@@ -88,32 +123,37 @@ Content pillar context: ${pillarContext[topic.pillar]}
 Write a complete, publication-ready blog article with the following requirements:
 
 TARGET KEYWORD: "${topic.keyword}"
-SUGGESTED TITLE: "${topic.title_hint}"
+ARTICLE TITLE: "${topic.title_hint}"
 
 STRUCTURE:
-- H1 title (use the suggested title or improve it slightly for the keyword)
 - Opening paragraph: hook the reader with the core problem or question (2–3 sentences)
 - 3–5 H2 sections with substantive content under each (150–250 words per section)
 - A natural product mention or two where it fits — not forced, not salesy
 - Closing paragraph with a soft call to action (e.g., "Learn more about the LiftUp floor lift" — do not use hard sales language)
 - Meta description (1 sentence, ~155 characters, include the target keyword)
 
-FORMATTING: Return the full article as clean HTML (h1, h2, p, ul/li tags only — no inline styles, no divs, no scripts). Place the meta description at the very end in this exact format:
+FORMATTING RULES — follow exactly:
+- Do NOT include an H1 tag. The title is displayed separately by the CMS; including it here causes it to appear twice.
+- Start the response directly with the opening <p> tag.
+- Use only these tags: p, h2, ul, li, strong, em, a.
+- No inline styles, no divs, no scripts.
+- Do NOT wrap the HTML in markdown code fences (no \`\`\`html ... \`\`\`).
+- Place the meta description at the very end in this exact format:
 <!-- meta: YOUR META DESCRIPTION HERE -->
 
 TONE: Warm, knowledgeable, and practical. Written for caregivers and family members, not medical professionals. Avoid jargon. Aim for a 7th–8th grade reading level.
 
 LENGTH: 900–1,200 words of body text (not counting HTML tags).
 
-Do not include any commentary before or after the HTML — return only the article HTML.`;
+Return only the article HTML — no commentary before or after.`;
 }
 
 async function generateArticle(topic) {
   const client = new Anthropic();
   const message = await client.messages.create({
-    model: 'claude-sonnet-4-6',
+    model:      'claude-sonnet-4-6',
     max_tokens: 2048,
-    messages: [{ role: 'user', content: buildPrompt(topic) }],
+    messages:   [{ role: 'user', content: buildPrompt(topic) }],
   });
   return message.content[0].text.trim();
 }
@@ -121,7 +161,6 @@ async function generateArticle(topic) {
 // ── Orchestration ────────────────────────────────────────────────────────────
 
 async function pickNextTopic(pool) {
-  // Find the highest topic_index used so far, then advance by 1 (wrapping around)
   const { rows } = await pool.query(
     'SELECT MAX(topic_index) AS last FROM blog_posts_log WHERE status != $1',
     ['error']
@@ -137,7 +176,6 @@ async function runBlogPost(pool) {
 
   console.log(`[blog] topic ${topicIndex} (${topic.blog}): "${topic.keyword}"`);
 
-  // Log intent before calling external APIs so a crash still leaves a trace
   const { rows: [logRow] } = await pool.query(
     `INSERT INTO blog_posts_log (topic_index, keyword, status)
      VALUES ($1, $2, 'in_progress') RETURNING id`,
@@ -146,24 +184,27 @@ async function runBlogPost(pool) {
   const logId = logRow.id;
 
   try {
-    const html    = await generateArticle(topic);
-    const token   = await getShopifyToken();
-    const blogId  = getBlogId(topic.blog);
+    const [rawHtml, image] = await Promise.all([
+      generateArticle(topic),
+      fetchUnsplashImage(topic.keyword),
+    ]);
 
-    // Extract title from the first <h1> tag
-    const titleMatch = html.match(/<h1[^>]*>(.*?)<\/h1>/i);
-    const title = titleMatch ? titleMatch[1].replace(/<[^>]+>/g, '') : topic.title_hint;
+    const token  = await getShopifyToken();
+    const blogId = getBlogId(topic.blog);
 
-    // Strip meta comment from body before publishing
-    const bodyHtml = html.replace(/<!--\s*meta:.*?-->/gi, '').trim();
+    // Clean Claude output: strip code fences, strip meta comment
+    let bodyHtml = cleanHtml(rawHtml);
+    bodyHtml = bodyHtml.replace(/<!--\s*meta:.*?-->/gi, '').trim();
 
-    const tags = ['fall recovery', 'caregiver', 'patient lift', topic.pillar];
+    // Prepend hero image if one was found
+    if (image) bodyHtml = buildHeroImageHtml(image) + '\n' + bodyHtml;
+
+    const title = topic.title_hint;
+    const tags  = ['fall recovery', 'caregiver', 'patient lift', topic.pillar];
     const article = await publishArticle(token, blogId, title, bodyHtml, tags.join(', '));
 
     await pool.query(
-      `UPDATE blog_posts_log
-       SET status = $1, title = $2, shopify_article_id = $3
-       WHERE id = $4`,
+      `UPDATE blog_posts_log SET status=$1, title=$2, shopify_article_id=$3 WHERE id=$4`,
       [PUBLISH_AS_DRAFT ? 'draft' : 'published', title, article.id, logId]
     );
 
@@ -172,7 +213,7 @@ async function runBlogPost(pool) {
 
   } catch (err) {
     await pool.query(
-      `UPDATE blog_posts_log SET status = 'error', error_message = $1 WHERE id = $2`,
+      `UPDATE blog_posts_log SET status='error', error_message=$1 WHERE id=$2`,
       [err.message, logId]
     );
     throw err;
