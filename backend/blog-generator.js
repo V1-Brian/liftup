@@ -186,7 +186,7 @@ async function runBlogPost(pool, forceTopicIndex = null) {
   try {
     const [rawHtml, image] = await Promise.all([
       generateArticle(topic),
-      fetchUnsplashImage(topic.keyword),
+      fetchUnsplashImage(topic.photo_search || topic.keyword),
     ]);
 
     const token  = await getShopifyToken();
