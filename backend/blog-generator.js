@@ -4,6 +4,21 @@ const TOPICS = require('./blog-topics');
 const SHOPIFY_API_VERSION = '2024-01';
 const PUBLISH_AS_DRAFT = false; // set to true to review before going live
 
+// Maps topic.blog → Vercel env var name
+const BLOG_ID_ENV = {
+  home_care:         'SHOPIFY_BLOG_ID_HOME_CARE',
+  professional_care: 'SHOPIFY_BLOG_ID_PROFESSIONAL_CARE',
+  buyers_guide:      'SHOPIFY_BLOG_ID_BUYERSGUIDE',
+};
+
+function getBlogId(blogKey) {
+  const envVar = BLOG_ID_ENV[blogKey];
+  if (!envVar) throw new Error(`Unknown blog key: ${blogKey}`);
+  const id = process.env[envVar];
+  if (!id) throw new Error(`Env var ${envVar} is not set`);
+  return id;
+}
+
 // ── Shopify helpers ──────────────────────────────────────────────────────────
 
 async function getShopifyToken() {
@@ -22,9 +37,9 @@ async function getShopifyToken() {
   return data.access_token;
 }
 
-async function publishArticle(token, title, bodyHtml, tags) {
-  const { SHOPIFY_STORE, SHOPIFY_BLOG_ID } = process.env;
-  const url = `https://${SHOPIFY_STORE}/admin/api/${SHOPIFY_API_VERSION}/blogs/${SHOPIFY_BLOG_ID}/articles.json`;
+async function publishArticle(token, blogId, title, bodyHtml, tags) {
+  const { SHOPIFY_STORE } = process.env;
+  const url = `https://${SHOPIFY_STORE}/admin/api/${SHOPIFY_API_VERSION}/blogs/${blogId}/articles.json`;
   const res = await fetch(url, {
     method: 'POST',
     headers: {
@@ -120,7 +135,7 @@ async function runBlogPost(pool) {
   const topicIndex = await pickNextTopic(pool);
   const topic      = TOPICS[topicIndex];
 
-  console.log(`[blog] topic ${topicIndex}: "${topic.keyword}"`);
+  console.log(`[blog] topic ${topicIndex} (${topic.blog}): "${topic.keyword}"`);
 
   // Log intent before calling external APIs so a crash still leaves a trace
   const { rows: [logRow] } = await pool.query(
@@ -133,6 +148,7 @@ async function runBlogPost(pool) {
   try {
     const html    = await generateArticle(topic);
     const token   = await getShopifyToken();
+    const blogId  = getBlogId(topic.blog);
 
     // Extract title from the first <h1> tag
     const titleMatch = html.match(/<h1[^>]*>(.*?)<\/h1>/i);
@@ -142,7 +158,7 @@ async function runBlogPost(pool) {
     const bodyHtml = html.replace(/<!--\s*meta:.*?-->/gi, '').trim();
 
     const tags = ['fall recovery', 'caregiver', 'patient lift', topic.pillar];
-    const article = await publishArticle(token, title, bodyHtml, tags.join(', '));
+    const article = await publishArticle(token, blogId, title, bodyHtml, tags.join(', '));
 
     await pool.query(
       `UPDATE blog_posts_log
@@ -151,8 +167,8 @@ async function runBlogPost(pool) {
       [PUBLISH_AS_DRAFT ? 'draft' : 'published', title, article.id, logId]
     );
 
-    console.log(`[blog] published article id=${article.id} "${title}"`);
-    return { ok: true, topicIndex, title, articleId: article.id };
+    console.log(`[blog] published article id=${article.id} "${title}" → ${topic.blog}`);
+    return { ok: true, topicIndex, blog: topic.blog, title, articleId: article.id };
 
   } catch (err) {
     await pool.query(
