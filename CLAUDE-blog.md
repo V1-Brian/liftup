@@ -117,16 +117,11 @@ Currently configured to **auto-publish** (`PUBLISH_AS_DRAFT = false` in `blog-ge
 - [x] Install `@anthropic-ai/sdk` in root `package.json`
 - [x] Create `backend/blog-topics.js` with full keyword list (40 topics)
 - [x] Create `backend/migrate_blog.js`
-- [ ] **RUN FIRST**: `migrate_blog.js` against Render DB — `blog_posts_log` table does not yet exist
-  ```bash
-  cd backend
-  DATABASE_URL="postgresql://liftup_user:g0z2pq31zdbRrJTkfnAHTCdfCJ7JSmNN@dpg-d7f908n7f7vs739rfh30-a.oregon-postgres.render.com:5432/liftup_31bl" node migrate_blog.js
-  ```
-- [ ] **THEN**: Update `backend/blog-topics.js` — add `blog` field to each topic (`'home_care'` | `'professional_care'` | `'buyers_guide'`)
-- [ ] **THEN**: Update `backend/blog-generator.js` — replace single `SHOPIFY_BLOG_ID` with named blog ID lookup map
-- [ ] Deploy to Vercel after code updates
-- [ ] Trigger manually to verify end-to-end: `vercel curl /api/cron/blog-post`
-- [ ] Confirm post appears in correct Shopify blog
+- [x] Run `migrate_blog.js` against Render DB — `blog_posts_log` table created 2026-05-05
+- [x] Update `backend/blog-topics.js` — `blog` field added to all 40 topics
+- [x] Update `backend/blog-generator.js` — resolves `SHOPIFY_BLOG_ID_*` env var from `topic.blog`
+- [x] Deploy to Vercel after code updates
+- [x] Triggered manually — first post published: "How to Lift an Elderly Person Off the Floor Without Injuring Yourself" → Home Care blog (article ID 569622069282)
 
 ## ⚙️ Known issues / pending
 

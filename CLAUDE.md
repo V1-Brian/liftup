@@ -104,7 +104,7 @@ New table:
 
 Run: `DATABASE_URL="..." node migrate_v4.js`
 
-### Migration blog (migrate_blog.js — **NOT YET RUN**)
+### Migration blog (migrate_blog.js — applied 2026-05-05)
 New table:
 - `blog_posts_log` — tracks weekly auto-generated blog posts; prevents topic repeats
 
@@ -205,11 +205,7 @@ Outbound emails currently send HTML body only. Attaching PDFs fails with "0 byte
 `invoices.mismatch_notes` is stored in the DB when a LiftUp invoice email is parsed, but no UI yet shows it on the invoice Status tab. Should display as a warning card when non-null.
 
 ### Blog module — setup incomplete
-The blog cron is deployed but not yet live. Before it can run:
-1. Add `ANTHROPIC_API_KEY` and `SHOPIFY_BLOG_ID` to Vercel env vars
-2. Add `write_content` scope to the Shopify custom app (Settings → Apps → Develop apps)
-3. Run `DATABASE_URL="..." node backend/migrate_blog.js` to create `blog_posts_log` table
-4. Trigger once manually to verify: `vercel curl /api/cron/blog-post`
+~~The blog cron is deployed but not yet live.~~ **Live as of 2026-05-05.** First post published to Home Care blog. Runs every Monday at 10 AM UTC.
 
 ### Render DB free tier expiry
 Upgrade `liftup-db` on Render before **2026-05-14** to avoid downtime.
