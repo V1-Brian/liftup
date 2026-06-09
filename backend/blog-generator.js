@@ -28,6 +28,14 @@ function getBlogId(blogKey) {
   return id;
 }
 
+// ── Disclaimer ───────────────────────────────────────────────────────────────
+
+const DISCLAIMER_HTML = `
+<div style="margin-top:2.5em;padding:1em 1.25em;background:#f8f8f8;border-left:4px solid #c0392b;border-radius:4px;font-size:0.9em;color:#444">
+  <strong>⚠️ Emergency:</strong> If someone has fallen and is injured, unresponsive, or you are unsure if it is safe to move them, <strong>call 911 immediately</strong>.<br><br>
+  <strong>Medical disclaimer:</strong> The information in this article is intended for general informational purposes only and does not constitute medical advice. It is not a substitute for professional medical guidance, diagnosis, or treatment. Every patient's situation is different — always consult your physician or a qualified healthcare provider before making decisions about care, equipment, or mobility assistance.
+</div>`.trim();
+
 // ── HTML cleanup ─────────────────────────────────────────────────────────────
 
 // Strip markdown code fences Claude sometimes adds around the HTML
@@ -217,6 +225,9 @@ async function runBlogPost(pool, forceTopicIndex = null) {
 
     // Prepend hero image if one was found
     if (image) bodyHtml = buildHeroImageHtml(image) + '\n' + bodyHtml;
+
+    // Append disclaimer to every post
+    bodyHtml = bodyHtml + '\n' + DISCLAIMER_HTML;
 
     const title = topic.title_hint;
     const tags  = ['fall recovery', 'caregiver', 'patient lift', topic.pillar];
