@@ -36,4 +36,8 @@ export const api = {
   getUnmatchedEmails: ()           => req('GET',    '/api/email/unmatched'),
   resolveUnmatched:   (id)         => req('POST',   `/api/email/unmatched/${id}/resolve`),
   pollEmails:         ()           => req('GET',    '/api/email/poll'),
+
+  getPendingReturns:  ()           => req('GET',    '/api/returns/pending'),
+  processReturn:      (id, d)      => req('POST',   `/api/returns/${id}/process`, d),
+  dismissReturn:      (id)         => req('POST',   `/api/returns/${id}/dismiss`),
 }

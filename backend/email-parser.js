@@ -63,11 +63,22 @@ function extractMonthWithFallback(text) {
 
 /**
  * Detect which type of email this is based on subject + sender.
- * Returns: 'liftup_invoice' | 'qb_payment' | 'bank_transfer' | 'unknown'
+ * Returns: 'liftup_invoice' | 'qb_payment' | 'bank_transfer' | 'amazon_return' | 'unknown'
  */
 function detectEmailType(subject = '', fromAddr = '') {
   const sub  = subject.toLowerCase();
   const from = fromAddr.toLowerCase();
+
+  // Amazon return/refund notifications — check before generic invoice rules
+  if (from.includes('amazon.com') || from.includes('amazon.co')) {
+    if (sub.includes('refund') || sub.includes('return') || sub.includes('a-to-z')) {
+      return 'amazon_return';
+    }
+  }
+  // Also detect by subject alone when the Amazon Order ID format is present
+  if ((sub.includes('refund') || sub.includes('return')) && /\d{3}-\d{7}-\d{7}/.test(subject)) {
+    return 'amazon_return';
+  }
 
   if (from.includes('intuit.com') || from.includes('quickbooks.com')) {
     if (sub.includes('payment') || sub.includes('receipt')) return 'qb_payment';
@@ -81,6 +92,26 @@ function detectEmailType(subject = '', fromAddr = '') {
   if (sub.includes('payment') && (sub.includes('receipt') || sub.includes('confirmation'))) return 'qb_payment';
 
   return 'unknown';
+}
+
+/**
+ * Parse Amazon "Refund Initiated" / return notification email.
+ * Returns { amazon_order_id, refund_amount } or null if no order ID found.
+ * amazon_order_id is the canonical Amazon format: XXX-XXXXXXX-XXXXXXX
+ */
+function parseAmazonReturnEmail(text = '', html = '', subject = '') {
+  const body = text || html.replace(/<[^>]+>/g, ' ');
+  const fullText = subject ? `${subject} ${body}` : body;
+
+  const orderMatch = fullText.match(/\b(\d{3}-\d{7}-\d{7})\b/);
+  if (!orderMatch) return null;
+
+  const amazon_order_id = orderMatch[1];
+
+  const amtMatch = fullText.match(/(?:refund(?:ed)?|amount)[:\s]+\$?\s*([\d,]+\.\d{2})/i);
+  const refund_amount = amtMatch ? parseFloat(amtMatch[1].replace(/,/g, '')) : null;
+
+  return { amazon_order_id, refund_amount };
 }
 
 // ── Line item extraction from QuickBooks HTML ─────────────────────────────────
@@ -300,5 +331,6 @@ module.exports = {
   parseLiftUpInvoiceEmail,
   parseQBPaymentEmail,
   parseBankTransferEmail,
+  parseAmazonReturnEmail,
   compareInvoices,
 };

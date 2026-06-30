@@ -66,6 +66,19 @@ async function fetchOrdersForMonth(store, token, month) {
   return all;
 }
 
+// Extract the Amazon Order ID from Shopify MCF orders.
+// Shopify stores it in note_attributes as { name: "Amazon Order ID", value: "XXX-XXXXXXX-XXXXXXX" }.
+// Falls back to source_identifier if it matches the Amazon order ID format.
+function extractAmazonOrderId(order) {
+  for (const attr of order.note_attributes || []) {
+    const name = (attr.name || '').toLowerCase();
+    if (name.includes('amazon') && name.includes('order')) return attr.value || null;
+  }
+  const src = order.source_identifier || '';
+  if (/^\d{3}-\d{7}-\d{7}$/.test(src)) return src;
+  return null;
+}
+
 function detectChannel(order) {
   const src  = (order.source_name || '').toLowerCase();
   const tags = (order.tags || '').toLowerCase();
@@ -84,8 +97,9 @@ function processOrders(shopifyOrders, skuMap) {
   const orders = [];
   for (const order of shopifyOrders) {
     if (order.cancelled_at) continue;
-    const date    = (order.created_at || '').slice(0, 10);
-    const channel = detectChannel(order);
+    const date           = (order.created_at || '').slice(0, 10);
+    const channel        = detectChannel(order);
+    const amazonOrderId  = channel === 'Amazon' ? extractAmazonOrderId(order) : null;
 
     for (const item of order.line_items || []) {
       if (!item.sku) continue;
@@ -96,14 +110,15 @@ function processOrders(shopifyOrders, skuMap) {
         : s ? (channel === 'Amazon' ? Number(s.amazon_price) : Number(s.shopify_price)) : 0;
 
       orders.push({
-        order_no:   order.name,
-        order_date: date,
-        sku:        item.sku,
-        qty:        item.quantity || 1,
+        order_no:        order.name,
+        order_date:      date,
+        sku:             item.sku,
+        qty:             item.quantity || 1,
         channel,
-        sale_price: salePrice,
-        status:     'sold',
-        note:       '',
+        sale_price:      salePrice,
+        status:          'sold',
+        note:            '',
+        amazon_order_id: amazonOrderId,
       });
     }
   }

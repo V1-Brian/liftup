@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
 import { fmt, fmtMonth } from '../lib/utils'
 import RecordPaymentModal from '../components/RecordPaymentModal'
+import ProcessReturnModal from '../components/ProcessReturnModal'
 
 function lastMonth() {
   const d = new Date(); d.setMonth(d.getMonth() - 1)
@@ -17,6 +18,8 @@ export default function Dashboard() {
   const [syncMsg,         setSyncMsg]         = useState(null)
   const [paymentModal,    setPaymentModal]    = useState(false)
   const [unmatchedCount,  setUnmatchedCount]  = useState(0)
+  const [pendingReturns,  setPendingReturns]  = useState([])
+  const [returnModal,     setReturnModal]     = useState(null)
   const [polling,         setPolling]         = useState(false)
   const [pollMsg,         setPollMsg]         = useState(null)
   const navigate = useNavigate()
@@ -28,6 +31,9 @@ export default function Dashboard() {
       .finally(() => setLoading(false))
     api.getUnmatchedEmails()
       .then(rows => setUnmatchedCount(rows.length))
+      .catch(() => {})
+    api.getPendingReturns()
+      .then(setPendingReturns)
       .catch(() => {})
   }, [])
 
@@ -43,6 +49,8 @@ export default function Dashboard() {
       }
       const unmatched = await api.getUnmatchedEmails().catch(() => [])
       setUnmatchedCount(unmatched.length)
+      const returns = await api.getPendingReturns().catch(() => [])
+      setPendingReturns(returns)
       const updated = await api.listInvoices().catch(() => invoices)
       setInvoices(updated)
       setTimeout(() => setPollMsg(null), 6000)
@@ -104,6 +112,31 @@ export default function Dashboard() {
       {unmatchedCount > 0 && (
         <div className="alert alert-warn" style={{ marginBottom: '1rem' }}>
           ⚠ {unmatchedCount} inbound email{unmatchedCount > 1 ? 's' : ''} could not be matched to an invoice automatically — review and resolve them via the payment recording flow.
+        </div>
+      )}
+
+      {pendingReturns.length > 0 && (
+        <div style={{ marginBottom: '1.5rem' }}>
+          <div className="card-title" style={{ marginBottom: '0.75rem' }}>
+            ↩ Pending Returns ({pendingReturns.length})
+          </div>
+          {pendingReturns.map(r => (
+            <div key={r.id} style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, padding: '0.75rem 1rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <div style={{ fontWeight: 600, fontSize: 13 }}>{r.amazon_order_id}</div>
+                {r.sku_name
+                  ? <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 2 }}>{r.sku_name} × {r.qty} — {r.invoice_month ? fmtMonth(r.invoice_month) : 'unknown month'}</div>
+                  : <div style={{ fontSize: 12, color: 'var(--amber)', marginTop: 2 }}>⚠ No matching order found</div>
+                }
+              </div>
+              {r.refund_amount && (
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{fmt(r.refund_amount)}</div>
+              )}
+              <button className="btn btn-sm" onClick={() => setReturnModal(r)}>
+                Review →
+              </button>
+            </div>
+          ))}
         </div>
       )}
 
@@ -216,6 +249,20 @@ export default function Dashboard() {
             setInvoices(updated)
             const unmatched = await api.getUnmatchedEmails().catch(() => [])
             setUnmatchedCount(unmatched.length)
+          }}
+        />
+      )}
+
+      {returnModal && (
+        <ProcessReturnModal
+          returnItem={returnModal}
+          onClose={() => setReturnModal(null)}
+          onProcessed={async () => {
+            setReturnModal(null)
+            const returns = await api.getPendingReturns().catch(() => [])
+            setPendingReturns(returns)
+            const updated = await api.listInvoices().catch(() => invoices)
+            setInvoices(updated)
           }}
         />
       )}

@@ -4,7 +4,7 @@ const cors    = require('cors');
 const { Pool } = require('pg');
 const { calcCommission } = require('./commission');
 const { getAccessToken, fetchOrdersForMonth, processOrders } = require('./shopify');
-const { detectEmailType, parseLiftUpInvoiceEmail, parseQBPaymentEmail, parseBankTransferEmail, compareInvoices } = require('./email-parser');
+const { detectEmailType, parseLiftUpInvoiceEmail, parseQBPaymentEmail, parseBankTransferEmail, parseAmazonReturnEmail, compareInvoices } = require('./email-parser');
 const { fetchFolderMessages, fetchUnreadMessages, fetchMessageContent, markAsRead, sendEmail } = require('./zoho-mail');
 const { buildSalesReport, buildCommissionInvoice } = require('./report-generator');
 const { runBlogPost } = require('./blog-generator');
@@ -165,12 +165,13 @@ app.post('/api/invoices/:month', async (req, res) => {
       await client.query(
         `INSERT INTO orders
            (invoice_id, order_no, order_date, sku, qty, channel, sale_price,
-            status, note, comm_flat, comm_mkt, comm_amz, comm_total)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+            status, note, comm_flat, comm_mkt, comm_amz, comm_total, amazon_order_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
         [invoiceId, o.order_no || null, o.order_date || null,
          o.sku, o.qty || 1, o.channel, o.sale_price,
          o.status || 'sold', o.note || null,
-         o.flat, o.mkt, o.amz, o.total]
+         o.flat, o.mkt, o.amz, o.total,
+         o.amazon_order_id || null]
       );
     }
 
@@ -352,12 +353,13 @@ async function syncMonth(month) {
       await client.query(
         `INSERT INTO orders
            (invoice_id, order_no, order_date, sku, qty, channel, sale_price,
-            status, note, comm_flat, comm_mkt, comm_amz, comm_total)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+            status, note, comm_flat, comm_mkt, comm_amz, comm_total, amazon_order_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
         [invoiceId, o.order_no || null, o.order_date || null,
          o.sku, o.qty || 1, o.channel, o.sale_price,
          o.status || 'sold', o.note || null,
-         o.flat, o.mkt, o.amz, o.total]
+         o.flat, o.mkt, o.amz, o.total,
+         o.amazon_order_id || null]
       );
     }
 
@@ -752,6 +754,56 @@ async function processEmail(subject, fromAddr, text, html) {
     return { type: 'bank_transfer', payment_id: payment.id, amount: parsed.amount, needs_allocation: true };
   }
 
+  // ── Amazon return/refund notification ────────────────────────────────────
+  if (emailType === 'amazon_return') {
+    const parsed = parseAmazonReturnEmail(text, html, subject);
+    if (!parsed) {
+      await pool.query(
+        `INSERT INTO unmatched_emails (subject, from_addr, text_body, reason) VALUES ($1,$2,$3,'unparseable')`,
+        [subject, fromAddr, text]
+      );
+      return { type: 'unmatched', reason: 'unparseable' };
+    }
+
+    // Deduplicate: skip if we already have a pending_return for this Amazon order
+    const { rows: existing } = await pool.query(
+      `SELECT id FROM pending_returns WHERE amazon_order_id=$1 AND status NOT IN ('dismissed')`,
+      [parsed.amazon_order_id]
+    );
+    if (existing.length) {
+      return { type: 'duplicate_return', amazon_order_id: parsed.amazon_order_id };
+    }
+
+    // Try to match to an order in our DB via amazon_order_id
+    const { rows: matched } = await pool.query(
+      `SELECT o.id AS order_id, o.invoice_id, i.month
+       FROM orders o JOIN invoices i ON i.id = o.invoice_id
+       WHERE o.amazon_order_id = $1
+       ORDER BY i.month DESC LIMIT 1`,
+      [parsed.amazon_order_id]
+    );
+
+    const status = matched.length ? 'pending' : 'unmatched';
+    const { rows: [ret] } = await pool.query(
+      `INSERT INTO pending_returns
+         (amazon_order_id, refund_amount, email_subject, email_from, email_body,
+          order_id, invoice_id, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+      [
+        parsed.amazon_order_id, parsed.refund_amount, subject, fromAddr, text,
+        matched[0]?.order_id || null, matched[0]?.invoice_id || null, status,
+      ]
+    );
+
+    return {
+      type:            'amazon_return',
+      pending_return_id: ret.id,
+      amazon_order_id: parsed.amazon_order_id,
+      matched:         matched.length > 0,
+      invoice_month:   matched[0]?.month || null,
+    };
+  }
+
   // ── Unknown — store for manual review ────────────────────────────────────
   await pool.query(
     `INSERT INTO unmatched_emails (subject, from_addr, text_body, reason) VALUES ($1,$2,$3,'unknown_type')`,
@@ -774,6 +826,7 @@ app.get('/api/email/poll', async (req, res) => {
     const invoiceFolderId = process.env.ZOHO_INVOICE_FOLDER_ID;
     const paymentFolderId = process.env.ZOHO_PAYMENT_FOLDER_ID;
     const creditFolderId  = process.env.ZOHO_CREDIT_FOLDER_ID;
+    const returnsFolderId = process.env.ZOHO_AMAZON_RETURNS_FOLDER_ID;
 
     let messages;
     if (invoiceFolderId || paymentFolderId) {
@@ -781,6 +834,7 @@ app.get('/api/email/poll', async (req, res) => {
         invoiceFolderId ? fetchFolderMessages(invoiceFolderId, 50) : Promise.resolve([]),
         paymentFolderId ? fetchFolderMessages(paymentFolderId, 50) : Promise.resolve([]),
         creditFolderId  ? fetchFolderMessages(creditFolderId,  50) : Promise.resolve([]),
+        returnsFolderId ? fetchFolderMessages(returnsFolderId, 50) : Promise.resolve([]),
       ]);
       messages = results.flatMap(r => {
         if (r.status === 'rejected') { console.error('Folder fetch error:', r.reason?.message); return []; }
@@ -869,6 +923,118 @@ app.post('/api/email/unmatched/:id/reprocess', async (req, res) => {
       await pool.query('UPDATE unmatched_emails SET resolved=TRUE WHERE id=$1', [em.id]);
     }
     res.json({ ok: true, result });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── PENDING RETURNS ───────────────────────────────────────────────────────────
+
+// List all pending/unmatched returns with order + invoice details
+app.get('/api/returns/pending', async (_, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT pr.id, pr.amazon_order_id, pr.refund_amount, pr.status,
+              pr.received_at, pr.email_subject,
+              o.order_no, o.sku, o.qty, o.sale_price, o.comm_total, o.status AS order_status,
+              s.name AS sku_name,
+              i.month AS invoice_month
+       FROM pending_returns pr
+       LEFT JOIN orders o      ON o.id  = pr.order_id
+       LEFT JOIN sku_config s  ON s.sku = o.sku
+       LEFT JOIN invoices i    ON i.id  = pr.invoice_id
+       WHERE pr.status IN ('pending','unmatched')
+       ORDER BY pr.received_at DESC`
+    );
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Process a return: update order status, auto-generate credits for 'after', update invoice totals
+app.post('/api/returns/:id/process', async (req, res) => {
+  const { disposition, note } = req.body;
+  if (!['before', 'after'].includes(disposition)) {
+    return res.status(400).json({ error: 'disposition must be before or after' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows } = await client.query('SELECT * FROM pending_returns WHERE id=$1', [req.params.id]);
+    if (!rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Not found' }); }
+    const ret = rows[0];
+    if (!ret.order_id) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'No matching order on record — update amazon_order_id manually first' }); }
+
+    // Update the order status
+    await client.query('UPDATE orders SET status=$1 WHERE id=$2', [disposition, ret.order_id]);
+
+    if (disposition === 'after') {
+      // Fetch order details for credit generation
+      const { rows: [order] } = await client.query(
+        `SELECT o.*, s.name AS sku_name, i.month
+         FROM orders o
+         LEFT JOIN sku_config s ON s.sku = o.sku
+         JOIN invoices i ON i.id = o.invoice_id
+         WHERE o.id = $1`,
+        [ret.order_id]
+      );
+
+      const skuName = order.sku_name || order.sku;
+      const qty     = order.qty || 1;
+
+      // Insert the two credit rows (open credits — no applied credits to worry about here)
+      await client.query(
+        `INSERT INTO credits (source_invoice_id, credit_type, sku, sku_name, amount, source_month)
+         VALUES ($1,'retail',$2,$3,$4,$5)`,
+        [order.invoice_id, order.sku, skuName, +(Number(order.sale_price) * qty).toFixed(2), order.month]
+      );
+      await client.query(
+        `INSERT INTO credits (source_invoice_id, credit_type, sku, sku_name, amount, source_month)
+         VALUES ($1,'commission',$2,$3,$4,$5)`,
+        [order.invoice_id, order.sku, skuName, +(Number(order.comm_total) * qty).toFixed(2), order.month]
+      );
+
+      // Recalculate and update invoice totals to reflect the status change
+      const { rows: allOrders } = await client.query(
+        'SELECT status, sale_price, comm_total, qty FROM orders WHERE invoice_id=$1',
+        [order.invoice_id]
+      );
+      const sold        = allOrders.filter(o => o.status === 'sold');
+      const afterOrders = allOrders.filter(o => o.status === 'after');
+      const totalRetail      = +sold.reduce((s, o) => s + Number(o.sale_price) * (o.qty||1), 0).toFixed(2);
+      const totalCommission  = +sold.reduce((s, o) => s + Number(o.comm_total) * (o.qty||1), 0).toFixed(2);
+      const totalCredit      = +afterOrders.reduce((s, o) => s + Number(o.sale_price) * (o.qty||1), 0).toFixed(2);
+      await client.query(
+        `UPDATE invoices SET total_retail=$1, total_commission=$2, total_credit=$3, updated_at=NOW()
+         WHERE id=$4`,
+        [totalRetail, totalCommission, totalCredit, order.invoice_id]
+      );
+    }
+
+    // Mark return as processed
+    await client.query(
+      `UPDATE pending_returns SET status='processed', disposition=$1, processed_at=NOW(), notes=$2
+       WHERE id=$3`,
+      [disposition, note || null, ret.id]
+    );
+
+    await client.query('COMMIT');
+    res.json({ ok: true, disposition });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+// Dismiss a pending return without taking action
+app.post('/api/returns/:id/dismiss', async (req, res) => {
+  try {
+    await pool.query(
+      `UPDATE pending_returns SET status='dismissed', processed_at=NOW() WHERE id=$1`,
+      [req.params.id]
+    );
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

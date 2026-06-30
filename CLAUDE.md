@@ -31,6 +31,7 @@ Sales commission tracking app. Tracks monthly invoices, orders, SKU configs, and
   `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET`, `ZOHO_REFRESH_TOKEN`, `ZOHO_ACCOUNT_ID`, `ZOHO_REGION`,
   `ZOHO_INVOICE_FOLDER_ID`, `ZOHO_PAYMENT_FOLDER_ID`, `ZOHO_CREDIT_FOLDER_ID`
 - **Also set** (blog module): `ANTHROPIC_API_KEY`, `SHOPIFY_BLOG_ID_HOME_CARE`, `SHOPIFY_BLOG_ID_PROFESSIONAL_CARE`, `SHOPIFY_BLOG_ID_BUYERSGUIDE`
+- **Also set** (returns module): `ZOHO_AMAZON_RETURNS_FOLDER_ID` = `7267523000000422018`
 - Known values for reference:
   - `LIFTUP_EMAIL` = `cyo@liftup.us`
   - `OUR_EMAIL` = `info@rizeup.care` (Zoho sender; also CCed on all outbound reports)
@@ -110,6 +111,18 @@ New table:
 
 Run: `DATABASE_URL="..." node backend/migrate_blog.js`
 
+### Migration v5 (migrate_v5.js — pending)
+New column on `orders`:
+- `amazon_order_id VARCHAR(40)` — Amazon Order ID for MCF orders (e.g. `113-XXXXXXX-XXXXXXX`); populated automatically during Shopify sync from `order.note_attributes`; used to match Amazon "Refund Initiated" emails to orders
+
+Run: `DATABASE_URL="..." node backend/migrate_v5.js`
+
+### Migration v6 (migrate_v6.js — pending)
+New table:
+- `pending_returns` — one row per Amazon refund notification email; `status`: `'pending'` (matched to order), `'unmatched'` (no order found), `'processed'` (user confirmed), `'dismissed'`; `disposition`: `'before'` or `'after'` set on process
+
+Run: `DATABASE_URL="..." node backend/migrate_v6.js`
+
 ---
 
 ## Email automation
@@ -123,7 +136,7 @@ Emails land in a **Zoho Mail** inbox. The system polls two dedicated Zoho folder
 | Liftup Invoices | `7267523000000148012` | `ZOHO_INVOICE_FOLDER_ID` |
 | Liftup Payment Confirmation | `7267523000000264033` | `ZOHO_PAYMENT_FOLDER_ID` |
 | Liftup Credit Memo | `7267523000000318023` | `ZOHO_CREDIT_FOLDER_ID` |
-| Amazon Returns | `7267523000000422018` | (not yet wired up) |
+| Amazon Returns | `7267523000000422018` | `ZOHO_AMAZON_RETURNS_FOLDER_ID` |
 
 ### Email sources
 - **LiftUp invoices** — sent from QuickBooks (`@intuit.com` or `@quickbooks.com`). Subject varies: `"Invoice - April sales 4 Raizer M 1 Carry case"`, `"Invoice - March Sales"`, etc. Body contains `BALANCE DUE $X,XXX.00` but **no invoice number** — the invoice number is only in the PDF attachment filename (`INVOICE_XXXX.pdf`) or behind the tracking redirect link. The system extracts the billing month from the subject line (e.g., "April" → `2026-04`) and records the email total for reconciliation; `invoices.invoice_number` must be entered manually.
@@ -161,6 +174,8 @@ Both require `Authorization: Bearer <CRON_SECRET>` (sent automatically by Vercel
 - `backend/email-parser.js` — `parseLiftUpInvoiceEmail(text, html, subject)` (extracts billing_month from subject when absent from body; invoice_number may be null since QB emails don't embed it), `parseQBPaymentEmail`, `parseBankTransferEmail`, `detectEmailType`, `compareInvoices` (total-level check; line-item check skipped when no parsed line items)
 - `backend/report-generator.js` — `buildSalesReport` and `buildCommissionInvoice`; each returns `{ subject, html, pdfBuffer, filename }`; uses pdfkit + V1 Ventures logo from `backend/assets/logo.png`
 - `backend/assets/logo.png` — V1 Ventures logo; used in PDF report headers
+- `backend/email-parser.js` — also exports `parseAmazonReturnEmail(text, html, subject)` → `{ amazon_order_id, refund_amount }` or null; `detectEmailType` now returns `'amazon_return'` for Amazon refund/return emails
+- `frontend/src/components/ProcessReturnModal.jsx` — modal for processing a pending return (before/after disposition)
 - `backend/blog-generator.js` — `generateAndPublishBlogPost()`: picks next topic from `blog-topics.js`, calls Claude API, posts to Shopify Articles API, logs to `blog_posts_log`
 - `backend/blog-topics.js` — ordered array of 40 SEO keyword topics (four content pillars)
 - `backend/migrate_blog.js` — creates `blog_posts_log` table (**not yet run against Render DB**)
@@ -193,6 +208,9 @@ Both require `Authorization: Bearer <CRON_SECRET>` (sent automatically by Vercel
 | GET | `/api/email/unmatched` | List unresolved unmatched emails |
 | POST | `/api/email/unmatched/:id/resolve` | Mark unmatched email resolved |
 | POST | `/api/email/unmatched/:id/reprocess` | Re-run the parser on a stored unmatched email (marks resolved on success) |
+| GET | `/api/returns/pending` | List pending/unmatched returns with order + invoice details |
+| POST | `/api/returns/:id/process` | Process a return: `{ disposition: 'before' \| 'after' }` — updates order status, generates credits for 'after', recalculates invoice totals |
+| POST | `/api/returns/:id/dismiss` | Dismiss a return without action |
 
 ---
 
