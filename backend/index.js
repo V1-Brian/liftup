@@ -986,7 +986,15 @@ app.get('/api/returns/pending', async (_, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Process a return: update order status, auto-generate credits for 'after', update invoice totals
+// Process a return from the pending_returns queue.
+//
+// 'after'  — return happened after the invoice was already sent to LiftUp.
+//            The original sale stands; invoice totals are NOT touched.
+//            Two open credits are created to be applied to a future invoice.
+//
+// 'before' — return happened before billing; item should never have been invoiced.
+//            Order status set to 'before' (excluded from totals); invoice totals
+//            recalculated. No credits generated.
 app.post('/api/returns/:id/process', async (req, res) => {
   const { disposition, note } = req.body;
   if (!['before', 'after'].includes(disposition)) {
@@ -1002,24 +1010,21 @@ app.post('/api/returns/:id/process', async (req, res) => {
     const ret = rows[0];
     if (!ret.order_id) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'No matching order on record — update amazon_order_id manually first' }); }
 
-    // Update the order status
-    await client.query('UPDATE orders SET status=$1 WHERE id=$2', [disposition, ret.order_id]);
+    const { rows: [order] } = await client.query(
+      `SELECT o.*, s.name AS sku_name, i.month
+       FROM orders o
+       LEFT JOIN sku_config s ON s.sku = o.sku
+       JOIN invoices i ON i.id = o.invoice_id
+       WHERE o.id = $1`,
+      [ret.order_id]
+    );
 
     if (disposition === 'after') {
-      // Fetch order details for credit generation
-      const { rows: [order] } = await client.query(
-        `SELECT o.*, s.name AS sku_name, i.month
-         FROM orders o
-         LEFT JOIN sku_config s ON s.sku = o.sku
-         JOIN invoices i ON i.id = o.invoice_id
-         WHERE o.id = $1`,
-        [ret.order_id]
-      );
-
+      // Invoice already sent — original sale stands, totals unchanged.
+      // Only create the two open credits for future application.
       const skuName = order.sku_name || order.sku;
       const qty     = order.qty || 1;
 
-      // Insert the two credit rows (open credits — no applied credits to worry about here)
       await client.query(
         `INSERT INTO credits (source_invoice_id, credit_type, sku, sku_name, amount, source_month)
          VALUES ($1,'retail',$2,$3,$4,$5)`,
@@ -1030,21 +1035,22 @@ app.post('/api/returns/:id/process', async (req, res) => {
          VALUES ($1,'commission',$2,$3,$4,$5)`,
         [order.invoice_id, order.sku, skuName, +(Number(order.comm_total) * qty).toFixed(2), order.month]
       );
+    }
 
-      // Recalculate and update invoice totals to reflect the status change
+    if (disposition === 'before') {
+      // Return before billing — exclude from invoice totals, no credits needed.
+      await client.query('UPDATE orders SET status=$1 WHERE id=$2', ['before', ret.order_id]);
+
       const { rows: allOrders } = await client.query(
         'SELECT status, sale_price, comm_total, qty FROM orders WHERE invoice_id=$1',
         [order.invoice_id]
       );
-      const sold        = allOrders.filter(o => o.status === 'sold');
-      const afterOrders = allOrders.filter(o => o.status === 'after');
-      const totalRetail      = +sold.reduce((s, o) => s + Number(o.sale_price) * (o.qty||1), 0).toFixed(2);
-      const totalCommission  = +sold.reduce((s, o) => s + Number(o.comm_total) * (o.qty||1), 0).toFixed(2);
-      const totalCredit      = +afterOrders.reduce((s, o) => s + Number(o.sale_price) * (o.qty||1), 0).toFixed(2);
+      const sold = allOrders.filter(o => o.status === 'sold');
+      const totalRetail     = +sold.reduce((s, o) => s + Number(o.sale_price) * (o.qty||1), 0).toFixed(2);
+      const totalCommission = +sold.reduce((s, o) => s + Number(o.comm_total) * (o.qty||1), 0).toFixed(2);
       await client.query(
-        `UPDATE invoices SET total_retail=$1, total_commission=$2, total_credit=$3, updated_at=NOW()
-         WHERE id=$4`,
-        [totalRetail, totalCommission, totalCredit, order.invoice_id]
+        `UPDATE invoices SET total_retail=$1, total_commission=$2, total_credit=0, updated_at=NOW() WHERE id=$3`,
+        [totalRetail, totalCommission, order.invoice_id]
       );
     }
 
