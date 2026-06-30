@@ -7,16 +7,43 @@ export default function CreditsPage() {
   const navigate = useNavigate()
   const [open,        setOpen]        = useState([])
   const [applied,     setApplied]     = useState([])
+  const [invoices,    setInvoices]    = useState([])
   const [loading,     setLoading]     = useState(true)
   const [error,       setError]       = useState(null)
   const [showApplied, setShowApplied] = useState(false)
+  // applyingId: which credit row has the selector open; selectedMonth: chosen invoice month
+  const [applyingId,    setApplyingId]    = useState(null)
+  const [selectedMonth, setSelectedMonth] = useState('')
+  const [applying,      setApplying]      = useState(false)
 
   useEffect(() => {
-    api.listCredits()
-      .then(({ open, applied }) => { setOpen(open); setApplied(applied) })
+    Promise.all([api.listCredits(), api.listInvoices()])
+      .then(([credits, invs]) => {
+        setOpen(credits.open)
+        setApplied(credits.applied)
+        setInvoices(invs)
+      })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
   }, [])
+
+  async function handleApply(creditId) {
+    if (!selectedMonth) return
+    setApplying(true)
+    setError(null)
+    try {
+      await api.applyCredit(creditId, selectedMonth)
+      const credits = await api.listCredits()
+      setOpen(credits.open)
+      setApplied(credits.applied)
+      setApplyingId(null)
+      setSelectedMonth('')
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setApplying(false)
+    }
+  }
 
   if (loading) return <div className="empty-state"><div className="spinner" /> Loading credits…</div>
 
@@ -27,7 +54,7 @@ export default function CreditsPage() {
           <div className="page-title">Credits</div>
           <div className="page-sub">
             {open.length > 0
-              ? `${open.length} open credit${open.length > 1 ? 's' : ''} — will auto-apply on next invoice save`
+              ? `${open.length} open credit${open.length > 1 ? 's' : ''} — apply manually below or auto-applies on next invoice save`
               : 'All credits have been applied'}
           </div>
         </div>
@@ -58,6 +85,7 @@ export default function CreditsPage() {
                 <th>Type</th>
                 <th style={{ textAlign: 'right' }}>Amount</th>
                 <th>Note</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -81,6 +109,36 @@ export default function CreditsPage() {
                     {c.credit_type === 'retail'
                       ? 'Reduces what we owe LiftUp'
                       : 'Reduces what LiftUp owes us'}
+                  </td>
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    {applyingId === c.id ? (
+                      <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                        <select
+                          value={selectedMonth}
+                          onChange={e => setSelectedMonth(e.target.value)}
+                          style={{ fontSize: 12, padding: '2px 4px' }}
+                        >
+                          <option value=''>Select invoice…</option>
+                          {invoices
+                            .filter(i => i.month >= c.source_month)
+                            .map(i => (
+                              <option key={i.month} value={i.month}>
+                                {fmtMonth(i.month)}
+                              </option>
+                            ))}
+                        </select>
+                        <button className="btn btn-sm btn-primary" onClick={() => handleApply(c.id)} disabled={applying || !selectedMonth}>
+                          Apply
+                        </button>
+                        <button className="btn btn-sm" onClick={() => { setApplyingId(null); setSelectedMonth('') }}>
+                          ✕
+                        </button>
+                      </div>
+                    ) : (
+                      <button className="btn btn-sm" onClick={() => { setApplyingId(c.id); setSelectedMonth('') }}>
+                        Apply to invoice →
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}

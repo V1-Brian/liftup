@@ -594,6 +594,44 @@ app.post('/api/payments', async (req, res) => {
 });
 
 // ── CREDITS ──────────────────────────────────────────────────────────────────
+app.post('/api/credits/:id/apply', async (req, res) => {
+  const { invoice_month } = req.body;
+  if (!invoice_month) return res.status(400).json({ error: 'invoice_month required' });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: [credit] } = await client.query(
+      `SELECT * FROM credits WHERE id=$1 AND status='open'`, [req.params.id]
+    );
+    if (!credit) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Open credit not found' }); }
+
+    const { rows: [invoice] } = await client.query(
+      `SELECT id, month FROM invoices WHERE month=$1`, [invoice_month]
+    );
+    if (!invoice) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Invoice not found for that month' }); }
+
+    const label = `Credit memo - ${credit.sku_name} (from ${credit.source_month})`;
+    await client.query(
+      `INSERT INTO adjustments (invoice_id, label, amount, adj_type) VALUES ($1,$2,$3,'credit')`,
+      [invoice.id, label, -Number(credit.amount)]
+    );
+    await client.query(
+      `UPDATE credits SET status='applied', receiving_invoice_id=$1, applied_at=NOW() WHERE id=$2`,
+      [invoice.id, credit.id]
+    );
+
+    await client.query('COMMIT');
+    res.json({ ok: true });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
 app.get('/api/credits', async (req, res) => {
   try {
     const { rows } = await pool.query(`
