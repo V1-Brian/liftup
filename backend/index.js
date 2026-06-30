@@ -186,9 +186,9 @@ app.post('/api/invoices/:month', async (req, res) => {
     }
 
     // ── Auto-generate credits for 'after' orders ─────────────────────────────
-    // Only delete open credits — applied credits must survive re-save
+    // Only delete invoice_save credits — return_processed credits survive re-save
     await client.query(
-      `DELETE FROM credits WHERE source_invoice_id=$1 AND status='open'`, [invoiceId]
+      `DELETE FROM credits WHERE source_invoice_id=$1 AND status='open' AND source='invoice_save'`, [invoiceId]
     );
     const afterOrders = enriched.filter(o => o.status === 'after');
     for (const o of afterOrders) {
@@ -196,14 +196,14 @@ app.post('/api/invoices/:month', async (req, res) => {
       const skuName = s ? s.name : o.sku;
       // Retail credit: reduces what we owe LiftUp
       await client.query(
-        `INSERT INTO credits (source_invoice_id, credit_type, sku, sku_name, amount, source_month)
-         VALUES ($1,'retail',$2,$3,$4,$5)`,
+        `INSERT INTO credits (source_invoice_id, credit_type, sku, sku_name, amount, source_month, source)
+         VALUES ($1,'retail',$2,$3,$4,$5,'invoice_save')`,
         [invoiceId, o.sku, skuName, +(Number(o.sale_price) * (o.qty || 1)).toFixed(2), month]
       );
       // Commission credit: reduces what LiftUp owes us
       await client.query(
-        `INSERT INTO credits (source_invoice_id, credit_type, sku, sku_name, amount, source_month)
-         VALUES ($1,'commission',$2,$3,$4,$5)`,
+        `INSERT INTO credits (source_invoice_id, credit_type, sku, sku_name, amount, source_month, source)
+         VALUES ($1,'commission',$2,$3,$4,$5,'invoice_save')`,
         [invoiceId, o.sku, skuName, +(o.total * (o.qty || 1)).toFixed(2), month]
       );
     }
@@ -1026,13 +1026,13 @@ app.post('/api/returns/:id/process', async (req, res) => {
       const qty     = order.qty || 1;
 
       await client.query(
-        `INSERT INTO credits (source_invoice_id, credit_type, sku, sku_name, amount, source_month)
-         VALUES ($1,'retail',$2,$3,$4,$5)`,
+        `INSERT INTO credits (source_invoice_id, credit_type, sku, sku_name, amount, source_month, source)
+         VALUES ($1,'retail',$2,$3,$4,$5,'return_processed')`,
         [order.invoice_id, order.sku, skuName, +(Number(order.sale_price) * qty).toFixed(2), order.month]
       );
       await client.query(
-        `INSERT INTO credits (source_invoice_id, credit_type, sku, sku_name, amount, source_month)
-         VALUES ($1,'commission',$2,$3,$4,$5)`,
+        `INSERT INTO credits (source_invoice_id, credit_type, sku, sku_name, amount, source_month, source)
+         VALUES ($1,'commission',$2,$3,$4,$5,'return_processed')`,
         [order.invoice_id, order.sku, skuName, +(Number(order.comm_total) * qty).toFixed(2), order.month]
       );
     }
