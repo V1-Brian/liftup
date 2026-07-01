@@ -3,8 +3,8 @@ const express = require('express');
 const cors    = require('cors');
 const { Pool } = require('pg');
 const { calcCommission } = require('./commission');
-const { getAccessToken, fetchOrdersForMonth, processOrders } = require('./shopify');
-const { detectEmailType, parseLiftUpInvoiceEmail, parseQBPaymentEmail, parseBankTransferEmail, parseAmazonReturnEmail, compareInvoices } = require('./email-parser');
+const { getAccessToken, fetchOrdersForMonth, processOrders, updateShopifyTracking } = require('./shopify');
+const { detectEmailType, parseLiftUpInvoiceEmail, parseQBPaymentEmail, parseBankTransferEmail, parseAmazonReturnEmail, parseShopifyOrderEmail, parseUPSShipmentEmail, compareInvoices } = require('./email-parser');
 const { fetchFolderMessages, fetchUnreadMessages, fetchMessageContent, markAsRead, sendEmail } = require('./zoho-mail');
 const { buildSalesReport, buildCommissionInvoice } = require('./report-generator');
 const { runBlogPost } = require('./blog-generator');
@@ -648,6 +648,16 @@ app.get('/api/credits', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── SHIPMENTS ─────────────────────────────────────────────────────────────────
+app.get('/api/shipments', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM shipments ORDER BY created_at DESC`
+    );
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── EMAIL PROCESSING (shared logic used by the Zoho poll endpoint) ───────────
 async function processEmail(subject, fromAddr, text, html) {
   const emailType = detectEmailType(subject, fromAddr);
@@ -842,6 +852,92 @@ async function processEmail(subject, fromAddr, text, html) {
     };
   }
 
+  // ── Shopify new order → create shipment tracking row ─────────────────────
+  if (emailType === 'shopify_order') {
+    const parsed = parseShopifyOrderEmail(text, html, subject);
+    if (!parsed) {
+      await pool.query(
+        `INSERT INTO unmatched_emails (subject, from_addr, text_body, reason) VALUES ($1,$2,$3,'unparseable')`,
+        [subject, fromAddr, text]
+      );
+      return { type: 'unmatched', reason: 'unparseable' };
+    }
+    await pool.query(
+      `INSERT INTO shipments (order_no, shopify_order_id, order_email_subject)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (order_no) DO UPDATE
+         SET shopify_order_id     = COALESCE(shipments.shopify_order_id, EXCLUDED.shopify_order_id),
+             order_email_subject  = EXCLUDED.order_email_subject`,
+      [parsed.order_no, parsed.shopify_order_id || null, subject]
+    );
+    return { type: 'shopify_order', order_no: parsed.order_no };
+  }
+
+  // ── UPS shipment → update tracking + push to Shopify ─────────────────────
+  if (emailType === 'ups_shipment') {
+    const parsed = parseUPSShipmentEmail(text, html, subject);
+    if (!parsed) {
+      await pool.query(
+        `INSERT INTO unmatched_emails (subject, from_addr, text_body, reason) VALUES ($1,$2,$3,'unparseable')`,
+        [subject, fromAddr, text]
+      );
+      return { type: 'unmatched', reason: 'unparseable' };
+    }
+    if (!parsed.order_no) {
+      await pool.query(
+        `INSERT INTO unmatched_emails (subject, from_addr, text_body, reason) VALUES ($1,$2,$3,'no_order_ref')`,
+        [subject, fromAddr, text]
+      );
+      return { type: 'unmatched', reason: 'no_order_ref', tracking_number: parsed.tracking_number };
+    }
+
+    // Upsert shipment row with tracking info
+    await pool.query(
+      `INSERT INTO shipments (order_no, tracking_number, shipped_at, tracking_updated_at, shipment_email_subject)
+       VALUES ($1, $2, $3, NOW(), $4)
+       ON CONFLICT (order_no) DO UPDATE
+         SET tracking_number        = EXCLUDED.tracking_number,
+             shipped_at             = COALESCE(EXCLUDED.shipped_at, shipments.shipped_at),
+             tracking_updated_at    = NOW(),
+             shipment_email_subject = EXCLUDED.shipment_email_subject`,
+      [parsed.order_no, parsed.tracking_number, parsed.shipped_at || null, subject]
+    );
+
+    // Push tracking to Shopify
+    let shopifySynced = false;
+    let syncError     = null;
+    try {
+      const store       = process.env.SHOPIFY_STORE;
+      const clientId    = process.env.SHOPIFY_CLIENT_ID;
+      const clientSecret= process.env.SHOPIFY_CLIENT_SECRET;
+      if (store && clientId && clientSecret) {
+        const token = await getAccessToken(store, clientId, clientSecret);
+        const { shopify_order_id } = await updateShopifyTracking(store, token, parsed.order_no, parsed.tracking_number);
+        await pool.query(
+          `UPDATE shipments SET shopify_synced=TRUE, shopify_synced_at=NOW(), shopify_order_id=COALESCE(shopify_order_id,$1), shopify_sync_error=NULL
+           WHERE order_no=$2`,
+          [shopify_order_id, parsed.order_no]
+        );
+        shopifySynced = true;
+      }
+    } catch (e) {
+      syncError = e.message;
+      await pool.query(
+        `UPDATE shipments SET shopify_sync_error=$1 WHERE order_no=$2`,
+        [e.message, parsed.order_no]
+      );
+      console.error(`Shopify tracking sync failed for ${parsed.order_no}:`, e.message);
+    }
+
+    return {
+      type:            'ups_shipment',
+      order_no:        parsed.order_no,
+      tracking_number: parsed.tracking_number,
+      shopify_synced:  shopifySynced,
+      sync_error:      syncError,
+    };
+  }
+
   // ── Unknown — store for manual review ────────────────────────────────────
   await pool.query(
     `INSERT INTO unmatched_emails (subject, from_addr, text_body, reason) VALUES ($1,$2,$3,'unknown_type')`,
@@ -861,18 +957,22 @@ app.get('/api/email/poll', async (req, res) => {
 
   try {
     // Poll specific folders if configured; fall back to full-inbox search
-    const invoiceFolderId = process.env.ZOHO_INVOICE_FOLDER_ID;
-    const paymentFolderId = process.env.ZOHO_PAYMENT_FOLDER_ID;
-    const creditFolderId  = process.env.ZOHO_CREDIT_FOLDER_ID;
-    const returnsFolderId = process.env.ZOHO_AMAZON_RETURNS_FOLDER_ID;
+    const invoiceFolderId  = process.env.ZOHO_INVOICE_FOLDER_ID;
+    const paymentFolderId  = process.env.ZOHO_PAYMENT_FOLDER_ID;
+    const creditFolderId   = process.env.ZOHO_CREDIT_FOLDER_ID;
+    const returnsFolderId  = process.env.ZOHO_AMAZON_RETURNS_FOLDER_ID;
+    const ordersFolderId   = process.env.ZOHO_ORDERS_FOLDER_ID;
+    const shipmentsFolderId= process.env.ZOHO_SHIPMENTS_FOLDER_ID;
 
     let messages;
     if (invoiceFolderId || paymentFolderId) {
       const results = await Promise.allSettled([
-        invoiceFolderId ? fetchFolderMessages(invoiceFolderId, 50) : Promise.resolve([]),
-        paymentFolderId ? fetchFolderMessages(paymentFolderId, 50) : Promise.resolve([]),
-        creditFolderId  ? fetchFolderMessages(creditFolderId,  50) : Promise.resolve([]),
-        returnsFolderId ? fetchFolderMessages(returnsFolderId, 50) : Promise.resolve([]),
+        invoiceFolderId   ? fetchFolderMessages(invoiceFolderId,   50) : Promise.resolve([]),
+        paymentFolderId   ? fetchFolderMessages(paymentFolderId,   50) : Promise.resolve([]),
+        creditFolderId    ? fetchFolderMessages(creditFolderId,    50) : Promise.resolve([]),
+        returnsFolderId   ? fetchFolderMessages(returnsFolderId,   50) : Promise.resolve([]),
+        ordersFolderId    ? fetchFolderMessages(ordersFolderId,    50) : Promise.resolve([]),
+        shipmentsFolderId ? fetchFolderMessages(shipmentsFolderId, 50) : Promise.resolve([]),
       ]);
       messages = results.flatMap(r => {
         if (r.status === 'rejected') { console.error('Folder fetch error:', r.reason?.message); return []; }

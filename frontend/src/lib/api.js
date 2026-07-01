@@ -41,4 +41,6 @@ export const api = {
   getPendingReturns:  ()           => req('GET',    '/api/returns/pending'),
   processReturn:      (id, d)      => req('POST',   `/api/returns/${id}/process`, d),
   dismissReturn:      (id)         => req('POST',   `/api/returns/${id}/dismiss`),
+
+  getShipments:       ()           => req('GET',    '/api/shipments'),
 }

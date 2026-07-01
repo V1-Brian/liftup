@@ -1,9 +1,10 @@
 import { Routes, Route, NavLink, useNavigate, useLocation } from 'react-router-dom'
-import Dashboard    from './pages/Dashboard'
-import InvoicePage  from './pages/InvoicePage'
-import HistoryPage  from './pages/HistoryPage'
-import SkuPage      from './pages/SkuPage'
-import CreditsPage  from './pages/CreditsPage'
+import Dashboard     from './pages/Dashboard'
+import InvoicePage   from './pages/InvoicePage'
+import HistoryPage   from './pages/HistoryPage'
+import SkuPage       from './pages/SkuPage'
+import CreditsPage   from './pages/CreditsPage'
+import ShipmentsPage from './pages/ShipmentsPage'
 
 function Sidebar() {
   const loc = useLocation()
@@ -30,6 +31,10 @@ function Sidebar() {
         ↩ Credits
       </NavLink>
 
+      <NavLink to="/shipments" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}>
+        📦 Shipments
+      </NavLink>
+
       <div className="nav-section">Settings</div>
       <NavLink to="/skus" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}>
         ⚙️ SKU config
@@ -49,6 +54,7 @@ export default function App() {
           <Route path="/invoice/:month" element={<InvoicePage />} />
           <Route path="/history"        element={<HistoryPage />} />
           <Route path="/credits"        element={<CreditsPage />} />
+          <Route path="/shipments"      element={<ShipmentsPage />} />
           <Route path="/skus"           element={<SkuPage />} />
         </Routes>
       </div>

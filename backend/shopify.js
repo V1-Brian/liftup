@@ -125,4 +125,55 @@ function processOrders(shopifyOrders, skuMap) {
   return orders;
 }
 
-module.exports = { getAccessToken, fetchOrdersForMonth, processOrders };
+/**
+ * Find a Shopify order by its name (e.g. "#11407") and create a fulfillment
+ * with the given UPS tracking number.
+ *
+ * Returns { shopify_order_id, fulfillment_id } on success.
+ * Throws on API error or if no open fulfillment order is found.
+ */
+async function updateShopifyTracking(store, token, orderName, trackingNumber) {
+  // 1. Find the order by name
+  const searchUrl = `https://${store}/admin/api/${SHOPIFY_API_VERSION}/orders.json` +
+    `?name=${encodeURIComponent(orderName)}&status=any&fields=id,name,fulfillment_status&limit=5`;
+  const searchRes = await fetch(searchUrl, { headers: { 'X-Shopify-Access-Token': token } });
+  if (!searchRes.ok) throw new Error(`Shopify order search ${searchRes.status}: ${await searchRes.text()}`);
+  const { orders } = await searchRes.json();
+  if (!orders || !orders.length) throw new Error(`Order ${orderName} not found in Shopify`);
+  const shopifyOrderId = orders[0].id;
+
+  // 2. Get open fulfillment orders
+  const foUrl = `https://${store}/admin/api/${SHOPIFY_API_VERSION}/orders/${shopifyOrderId}/fulfillment_orders.json`;
+  const foRes = await fetch(foUrl, { headers: { 'X-Shopify-Access-Token': token } });
+  if (!foRes.ok) throw new Error(`Shopify fulfillment orders ${foRes.status}: ${await foRes.text()}`);
+  const { fulfillment_orders } = await foRes.json();
+
+  const openFO = (fulfillment_orders || []).find(fo =>
+    fo.status === 'open' || fo.status === 'in_progress' || fo.status === 'scheduled'
+  );
+  if (!openFO) throw new Error(`No open fulfillment order for ${orderName} (status: ${orders[0].fulfillment_status})`);
+
+  // 3. Create fulfillment with tracking info
+  const fulfillUrl = `https://${store}/admin/api/${SHOPIFY_API_VERSION}/fulfillments.json`;
+  const fulfillRes = await fetch(fulfillUrl, {
+    method: 'POST',
+    headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      fulfillment: {
+        line_items_by_fulfillment_order: [{ fulfillment_order_id: openFO.id }],
+        tracking_info: {
+          number:  trackingNumber,
+          company: 'UPS',
+          url:     `https://www.ups.com/track?tracknum=${trackingNumber}`,
+        },
+        notify_customer: true,
+      },
+    }),
+  });
+  if (!fulfillRes.ok) throw new Error(`Shopify create fulfillment ${fulfillRes.status}: ${await fulfillRes.text()}`);
+  const { fulfillment } = await fulfillRes.json();
+
+  return { shopify_order_id: shopifyOrderId, fulfillment_id: fulfillment.id };
+}
+
+module.exports = { getAccessToken, fetchOrdersForMonth, processOrders, updateShopifyTracking };

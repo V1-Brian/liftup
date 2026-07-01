@@ -80,6 +80,18 @@ function detectEmailType(subject = '', fromAddr = '') {
     return 'amazon_return';
   }
 
+  // UPS shipment notifications
+  if (from.includes('ups.com') || sub.includes('ups ship') || sub.includes('ups shipment') ||
+      /\b1z[a-z0-9]{16}\b/i.test(subject)) {
+    return 'ups_shipment';
+  }
+
+  // Shopify new order notifications
+  if (from.includes('shopify.com') || sub.includes('new order') ||
+      (sub.includes('order') && /#\d{3,6}\b/.test(subject))) {
+    return 'shopify_order';
+  }
+
   if (from.includes('intuit.com') || from.includes('quickbooks.com')) {
     if (sub.includes('payment') || sub.includes('receipt')) return 'qb_payment';
     if (sub.includes('invoice'))                             return 'liftup_invoice';
@@ -326,11 +338,59 @@ function compareInvoices(ourOrders, theirItems, ourTotal, theirTotal) {
   return notes;
 }
 
+/**
+ * Parse a Shopify new order notification email.
+ * Returns { order_no, shopify_order_id } or null.
+ * order_no is in the canonical Shopify format: #11407
+ * shopify_order_id is the internal numeric Shopify ID (BigInt-safe string) when found.
+ */
+function parseShopifyOrderEmail(text = '', html = '', subject = '') {
+  const body = text || html.replace(/<[^>]+>/g, ' ');
+  const fullText = subject ? `${subject} ${body}` : body;
+
+  // Order number: "#11407", "Order #11407", "order number 11407"
+  const orderMatch = fullText.match(/#(\d{3,6})\b/);
+  if (!orderMatch) return null;
+  const order_no = '#' + orderMatch[1];
+
+  // Shopify internal order ID from URL (e.g. /orders/6123456789012)
+  const idMatch = (html || '').match(/\/orders\/(\d{8,})/);
+  const shopify_order_id = idMatch ? idMatch[1] : null;
+
+  return { order_no, shopify_order_id };
+}
+
+/**
+ * Parse a UPS shipment notification email.
+ * Returns { tracking_number, order_no, shipped_at } or null.
+ * UPS tracking numbers start with 1Z followed by 16 alphanumeric chars.
+ * order_no is extracted from "Reference Number 1" field (LiftUp uses Shopify order # there).
+ */
+function parseUPSShipmentEmail(text = '', html = '', subject = '') {
+  const body = text || html.replace(/<[^>]+>/g, ' ');
+  const fullText = subject ? `${subject} ${body}` : body;
+
+  // UPS tracking number: 1Z + 16 alphanumeric chars
+  const trackMatch = fullText.match(/\b(1Z[A-Z0-9]{16})\b/i);
+  if (!trackMatch) return null;
+  const tracking_number = trackMatch[1].toUpperCase();
+
+  // "Reference Number 1: #11407" or "Reference No. 1: 11407" or "Reference 1 : 11407"
+  const refMatch = fullText.match(/[Rr]eference\s+(?:[Nn](?:o|umber|o\.)?\s*)?1\s*[:\-]\s*#?(\d{3,6})\b/);
+  const order_no = refMatch ? '#' + refMatch[1] : null;
+
+  const shipped_at = parseDate(body);
+
+  return { tracking_number, order_no, shipped_at };
+}
+
 module.exports = {
   detectEmailType,
   parseLiftUpInvoiceEmail,
   parseQBPaymentEmail,
   parseBankTransferEmail,
   parseAmazonReturnEmail,
+  parseShopifyOrderEmail,
+  parseUPSShipmentEmail,
   compareInvoices,
 };
