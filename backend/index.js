@@ -990,7 +990,26 @@ app.get('/api/email/poll', async (req, res) => {
       'SELECT message_id FROM processed_emails WHERE message_id = ANY($1)', [ids]
     );
     const seenSet = new Set(seen.map(r => r.message_id));
-    const newMsgs = messages.filter(m => !seenSet.has(String(m.messageId)));
+    const allNewMsgs = messages.filter(m => !seenSet.has(String(m.messageId)));
+
+    // For the orders/shipments folders, silently mark any historical emails as processed
+    // without running them through processEmail (they're already handled in Shopify).
+    const SHIPMENTS_LAUNCH_MS = new Date('2026-07-02T00:00:00Z').getTime();
+    const historicalSkip = [];
+    const newMsgs = allNewMsgs.filter(m => {
+      const isNewFolder = m.folderId === ordersFolderId || m.folderId === shipmentsFolderId;
+      if (isNewFolder && Number(m.receivedTime || 0) < SHIPMENTS_LAUNCH_MS) {
+        historicalSkip.push(m);
+        return false;
+      }
+      return true;
+    });
+    for (const msg of historicalSkip) {
+      await pool.query(
+        `INSERT INTO processed_emails (message_id) VALUES ($1) ON CONFLICT DO NOTHING`,
+        [String(msg.messageId)]
+      );
+    }
 
     if (!newMsgs.length) return res.json({ ok: true, processed: 0, summary: ['all messages already processed'], results: [] });
 
