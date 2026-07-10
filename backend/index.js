@@ -658,6 +658,37 @@ app.get('/api/shipments', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.post('/api/shipments/:id/retry-sync', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM shipments WHERE id=$1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Shipment not found' });
+    const s = rows[0];
+    if (!s.tracking_number) return res.status(400).json({ error: 'No tracking number to sync' });
+
+    const store        = process.env.SHOPIFY_STORE;
+    const clientId     = process.env.SHOPIFY_CLIENT_ID;
+    const clientSecret = process.env.SHOPIFY_CLIENT_SECRET;
+    if (!store || !clientId || !clientSecret) {
+      return res.status(500).json({ error: 'Shopify env vars not configured' });
+    }
+
+    const token = await getAccessToken(store, clientId, clientSecret);
+    const { shopify_order_id } = await updateShopifyTracking(store, token, s.order_no, s.tracking_number);
+    await pool.query(
+      `UPDATE shipments SET shopify_synced=TRUE, shopify_synced_at=NOW(),
+       shopify_order_id=COALESCE(shopify_order_id,$1), shopify_sync_error=NULL WHERE id=$2`,
+      [shopify_order_id, s.id]
+    );
+    res.json({ ok: true, order_no: s.order_no, shopify_order_id });
+  } catch (e) {
+    await pool.query(
+      `UPDATE shipments SET shopify_sync_error=$1 WHERE id=$2`,
+      [e.message, req.params.id]
+    );
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── EMAIL PROCESSING (shared logic used by the Zoho poll endpoint) ───────────
 async function processEmail(subject, fromAddr, text, html) {
   const emailType = detectEmailType(subject, fromAddr);

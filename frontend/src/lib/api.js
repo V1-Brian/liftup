@@ -43,4 +43,5 @@ export const api = {
   dismissReturn:      (id)         => req('POST',   `/api/returns/${id}/dismiss`),
 
   getShipments:       ()           => req('GET',    '/api/shipments'),
+  retryShopifySync:   (id)         => req('POST',   `/api/shipments/${id}/retry-sync`),
 }

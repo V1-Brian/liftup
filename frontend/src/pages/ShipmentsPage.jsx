@@ -16,6 +16,7 @@ export default function ShipmentsPage() {
   const [loading,   setLoading]   = useState(true)
   const [error,     setError]     = useState(null)
   const [search,    setSearch]    = useState('')
+  const [retrying,  setRetrying]  = useState(null)
 
   useEffect(() => {
     api.getShipments()
@@ -34,6 +35,20 @@ export default function ShipmentsPage() {
   const awaiting  = shipments.filter(s => !s.tracking_number).length
   const inTransit = shipments.filter(s =>  s.tracking_number && !s.shopify_synced).length
   const synced    = shipments.filter(s =>  s.shopify_synced).length
+
+  async function handleRetry(id) {
+    setRetrying(id)
+    setError(null)
+    try {
+      await api.retryShopifySync(id)
+      const updated = await api.getShipments()
+      setShipments(updated)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setRetrying(null)
+    }
+  }
 
   if (loading) return <div className="empty-state"><div className="spinner" /> Loading shipments…</div>
 
@@ -117,8 +132,20 @@ export default function ShipmentsPage() {
                           {s.shopify_synced_at ? new Date(s.shopify_synced_at).toLocaleDateString() : 'Yes'}
                         </span>
                       : s.shopify_sync_error
-                        ? <span style={{ color: 'var(--red)', fontSize: 11 }} title={s.shopify_sync_error}>
-                            Failed ⚠
+                        ? <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ color: 'var(--red)', fontSize: 11 }} title={s.shopify_sync_error}>
+                              Failed ⚠
+                            </span>
+                            {s.tracking_number && (
+                              <button
+                                className="btn btn-sm"
+                                style={{ fontSize: 11, padding: '1px 6px' }}
+                                disabled={retrying === s.id}
+                                onClick={() => handleRetry(s.id)}
+                              >
+                                {retrying === s.id ? '…' : '↺ Retry'}
+                              </button>
+                            )}
                           </span>
                         : <span style={{ color: 'var(--text3)' }}>—</span>}
                   </td>
