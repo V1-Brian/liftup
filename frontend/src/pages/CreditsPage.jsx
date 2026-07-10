@@ -80,6 +80,7 @@ export default function CreditsPage() {
             <thead>
               <tr>
                 <th>Source month</th>
+                <th>Order #</th>
                 <th>SKU</th>
                 <th>Product</th>
                 <th>Type</th>
@@ -97,6 +98,7 @@ export default function CreditsPage() {
                       {fmtMonth(c.source_month)}
                     </button>
                   </td>
+                  <td style={{ fontSize: 12 }}>{c.order_no || '—'}</td>
                   <td style={{ fontWeight: 600, fontSize: 12 }}>{c.sku}</td>
                   <td style={{ fontSize: 12, color: 'var(--text2)' }}>{c.sku_name}</td>
                   <td>
@@ -161,6 +163,7 @@ export default function CreditsPage() {
                 <thead>
                   <tr>
                     <th>Source month</th>
+                    <th>Order #</th>
                     <th>SKU</th>
                     <th>Product</th>
                     <th>Type</th>
@@ -173,6 +176,7 @@ export default function CreditsPage() {
                   {applied.map(c => (
                     <tr key={c.id}>
                       <td style={{ fontWeight: 600, fontSize: 12 }}>{fmtMonth(c.source_month)}</td>
+                      <td style={{ fontSize: 12 }}>{c.order_no || '—'}</td>
                       <td style={{ fontWeight: 600, fontSize: 12 }}>{c.sku}</td>
                       <td style={{ fontSize: 12, color: 'var(--text2)' }}>{c.sku_name}</td>
                       <td>

@@ -5,12 +5,17 @@ import { fmt, fmtMonth } from '../lib/utils'
 export default function ProcessReturnModal({ returnItem, onClose, onProcessed }) {
   const [saving,  setSaving]  = useState(false)
   const [error,   setError]   = useState(null)
+  const [retailCredit,     setRetailCredit]     = useState(true)
+  const [commissionCredit, setCommissionCredit] = useState(true)
 
   async function handle(disposition) {
     setSaving(true)
     setError(null)
     try {
-      await api.processReturn(returnItem.id, { disposition })
+      const credit_types = disposition === 'after'
+        ? [retailCredit && 'retail', commissionCredit && 'commission'].filter(Boolean)
+        : undefined
+      await api.processReturn(returnItem.id, { disposition, credit_types })
       onProcessed()
     } catch (e) {
       setError(e.message)
@@ -84,12 +89,31 @@ export default function ProcessReturnModal({ returnItem, onClose, onProcessed })
               <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: '1rem' }}>
                 This determines whether to exclude it from the original invoice totals (<em>same month</em>) or generate a credit memo (<em>after invoice was sent</em>).
               </p>
-              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
                 <button className="btn" onClick={() => handle('before')} disabled={saving}>
                   Same month as invoice
                 </button>
-                <button className="btn btn-primary" onClick={() => handle('after')} disabled={saving}>
-                  After invoice was sent (credit memo)
+              </div>
+
+              <div style={{ background: 'var(--bg2)', borderRadius: 6, padding: '0.75rem 1rem', marginBottom: '0.75rem' }}>
+                <p style={{ fontSize: 13, fontWeight: 600, marginBottom: '0.5rem' }}>After invoice was sent (credit memo)</p>
+                <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: '0.5rem' }}>
+                  Normally LiftUp owes us back the retail amount and we owe LiftUp back the commission. If we never invoiced LiftUp commission on this order, uncheck that side.
+                </p>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: 13, marginBottom: '0.3rem' }}>
+                  <input type="checkbox" checked={retailCredit} onChange={e => setRetailCredit(e.target.checked)} />
+                  Retail credit — LiftUp owes us back
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: 13, marginBottom: '0.6rem' }}>
+                  <input type="checkbox" checked={commissionCredit} onChange={e => setCommissionCredit(e.target.checked)} />
+                  Commission credit — we owe LiftUp back
+                </label>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => handle('after')}
+                  disabled={saving || (!retailCredit && !commissionCredit)}
+                >
+                  Create credit{(retailCredit && commissionCredit) ? 's' : ''}
                 </button>
               </div>
             </>

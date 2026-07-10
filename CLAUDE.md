@@ -139,6 +139,12 @@ New table:
 
 Run: `DATABASE_URL="..." node backend/migrate_v7.js`
 
+### Migration v8 (migrate_v8.js — applied 2026-07-10)
+New column on `credits`:
+- `order_no VARCHAR(60)` — denormalized snapshot of the originating order's Shopify order number (like `sku_name`, not an FK — orders are deleted+reinserted on every invoice save, so an FK would go stale). Populated by both credit-creation paths (invoice save + returns flow); displayed on the Credits page so open/applied credits can be matched back to a specific order.
+
+Run: `DATABASE_URL="..." node backend/migrate_v8.js`
+
 ---
 
 ## Email automation
@@ -200,7 +206,7 @@ Both require `Authorization: Bearer <CRON_SECRET>` (sent automatically by Vercel
 - `frontend/src/lib/utils.js` — `calcCommission`, `fmt`, `fmtMonth`, `STATUS_OPTIONS`, `parseShopifyCSV`
 - `frontend/src/pages/` — Dashboard, InvoicePage, SkuPage, HistoryPage, CreditsPage, ShipmentsPage
 - `frontend/src/components/RecordPaymentModal.jsx` — modal for recording LiftUp invoice payments and commission receipts
-- `frontend/src/components/ProcessReturnModal.jsx` — modal for processing a pending return (before/after disposition)
+- `frontend/src/components/ProcessReturnModal.jsx` — modal for processing a pending return (before/after disposition; on "after" lets user toggle which credit type(s) — retail and/or commission — actually apply)
 
 ## API endpoints
 | Method | Path | Purpose |
@@ -228,7 +234,7 @@ Both require `Authorization: Bearer <CRON_SECRET>` (sent automatically by Vercel
 | POST | `/api/email/unmatched/:id/resolve` | Mark unmatched email resolved |
 | POST | `/api/email/unmatched/:id/reprocess` | Re-run the parser on a stored unmatched email (marks resolved on success) |
 | GET | `/api/returns/pending` | List pending/unmatched returns with order + invoice details |
-| POST | `/api/returns/:id/process` | Process a return: `{ disposition: 'before' \| 'after' }` — updates order status, generates credits for 'after', recalculates invoice totals |
+| POST | `/api/returns/:id/process` | Process a return: `{ disposition: 'before' \| 'after', credit_types?: ['retail'\|'commission', ...] }` — updates order status, generates credits for 'after' (defaults to both types; pass a subset when only one side actually applies), recalculates invoice totals |
 | POST | `/api/returns/:id/dismiss` | Dismiss a return without action |
 | GET | `/api/shipments` | List all shipments ordered by created_at DESC |
 | POST | `/api/shipments/:id/retry-sync` | Retry Shopify fulfillment sync for a failed shipment |
@@ -262,7 +268,7 @@ Two paths create credits:
 
 **1. Invoice save UI** (`source='invoice_save'`): when an order is manually set to `status='after'` in the invoice editor and the invoice is saved, two credits are created (retail + commission). These are deleted and recreated on each re-save as long as the order remains `after`.
 
-**2. Returns flow** (`source='return_processed'`): when a pending return is processed with `disposition='after'` via `POST /api/returns/:id/process`, two credits are created without changing the order's status or invoice totals (invoice was already sent). These credits survive subsequent invoice re-saves.
+**2. Returns flow** (`source='return_processed'`): when a pending return is processed with `disposition='after'` via `POST /api/returns/:id/process`, credits are created without changing the order's status or invoice totals (invoice was already sent). By default both a retail and a commission credit are created; `ProcessReturnModal` lets the user uncheck one side — e.g. when LiftUp invoiced us for the sale but we never invoiced LiftUp commission on it, only the retail credit applies. These credits survive subsequent invoice re-saves.
 
 Credits start as `status='open'`. They can be:
 - **Auto-applied**: when a later-month invoice is saved, all open credits from prior months are automatically inserted as negative adjustment lines and marked `status='applied'`
@@ -296,9 +302,10 @@ Credits start as `status='open'`. They can be:
 
 ### Feature 4 — Amazon returns flow
 1. Amazon refund email → `pending_returns` row created; Dashboard shows "Pending Returns" section
-2. Process with `disposition='after'` → 2 open credits created (`source='return_processed'`), order status and invoice totals unchanged
-3. Re-save the source invoice → credits survive (not deleted by invoice save)
-4. Navigate to Credits page → apply credits to a future invoice manually
+2. Process with `disposition='after'` (both checkboxes checked) → 2 open credits created (`source='return_processed'`), each with `order_no` populated; order status and invoice totals unchanged
+3. Process with only one checkbox checked (e.g. retail only, when we never invoiced LiftUp commission on that order) → only 1 open credit created
+4. Re-save the source invoice → credits survive (not deleted by invoice save)
+5. Navigate to Credits page → order # column matches the source order; apply credits to a future invoice manually
 
 ### Regression checks
 - Existing invoice save/load works unchanged

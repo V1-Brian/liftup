@@ -196,15 +196,15 @@ app.post('/api/invoices/:month', async (req, res) => {
       const skuName = s ? s.name : o.sku;
       // Retail credit: reduces what we owe LiftUp
       await client.query(
-        `INSERT INTO credits (source_invoice_id, credit_type, sku, sku_name, amount, source_month, source)
-         VALUES ($1,'retail',$2,$3,$4,$5,'invoice_save')`,
-        [invoiceId, o.sku, skuName, +(Number(o.sale_price) * (o.qty || 1)).toFixed(2), month]
+        `INSERT INTO credits (source_invoice_id, credit_type, sku, sku_name, amount, source_month, source, order_no)
+         VALUES ($1,'retail',$2,$3,$4,$5,'invoice_save',$6)`,
+        [invoiceId, o.sku, skuName, +(Number(o.sale_price) * (o.qty || 1)).toFixed(2), month, o.order_no || null]
       );
       // Commission credit: reduces what LiftUp owes us
       await client.query(
-        `INSERT INTO credits (source_invoice_id, credit_type, sku, sku_name, amount, source_month, source)
-         VALUES ($1,'commission',$2,$3,$4,$5,'invoice_save')`,
-        [invoiceId, o.sku, skuName, +(o.total * (o.qty || 1)).toFixed(2), month]
+        `INSERT INTO credits (source_invoice_id, credit_type, sku, sku_name, amount, source_month, source, order_no)
+         VALUES ($1,'commission',$2,$3,$4,$5,'invoice_save',$6)`,
+        [invoiceId, o.sku, skuName, +(o.total * (o.qty || 1)).toFixed(2), month, o.order_no || null]
       );
     }
 
@@ -1140,16 +1140,24 @@ app.get('/api/returns/pending', async (_, res) => {
 //
 // 'after'  — return happened after the invoice was already sent to LiftUp.
 //            The original sale stands; invoice totals are NOT touched.
-//            Two open credits are created to be applied to a future invoice.
+//            By default, both a retail credit (LiftUp owes us back) and a
+//            commission credit (we owe LiftUp back) are created. Pass
+//            `credit_types: ['retail']` or `['commission']` to create only
+//            one side — e.g. when LiftUp invoiced us for the sale but we
+//            never invoiced them commission on it, so there's nothing on
+//            the commission side to credit back.
 //
 // 'before' — return happened before billing; item should never have been invoiced.
 //            Order status set to 'before' (excluded from totals); invoice totals
 //            recalculated. No credits generated.
 app.post('/api/returns/:id/process', async (req, res) => {
-  const { disposition, note } = req.body;
+  const { disposition, note, credit_types } = req.body;
   if (!['before', 'after'].includes(disposition)) {
     return res.status(400).json({ error: 'disposition must be before or after' });
   }
+  const creditTypes = Array.isArray(credit_types) && credit_types.length
+    ? credit_types.filter(t => ['retail', 'commission'].includes(t))
+    : ['retail', 'commission'];
 
   const client = await pool.connect();
   try {
@@ -1171,20 +1179,24 @@ app.post('/api/returns/:id/process', async (req, res) => {
 
     if (disposition === 'after') {
       // Invoice already sent — original sale stands, totals unchanged.
-      // Only create the two open credits for future application.
+      // Only create open credits for the selected credit_types.
       const skuName = order.sku_name || order.sku;
       const qty     = order.qty || 1;
 
-      await client.query(
-        `INSERT INTO credits (source_invoice_id, credit_type, sku, sku_name, amount, source_month, source)
-         VALUES ($1,'retail',$2,$3,$4,$5,'return_processed')`,
-        [order.invoice_id, order.sku, skuName, +(Number(order.sale_price) * qty).toFixed(2), order.month]
-      );
-      await client.query(
-        `INSERT INTO credits (source_invoice_id, credit_type, sku, sku_name, amount, source_month, source)
-         VALUES ($1,'commission',$2,$3,$4,$5,'return_processed')`,
-        [order.invoice_id, order.sku, skuName, +(Number(order.comm_total) * qty).toFixed(2), order.month]
-      );
+      if (creditTypes.includes('retail')) {
+        await client.query(
+          `INSERT INTO credits (source_invoice_id, credit_type, sku, sku_name, amount, source_month, source, order_no)
+           VALUES ($1,'retail',$2,$3,$4,$5,'return_processed',$6)`,
+          [order.invoice_id, order.sku, skuName, +(Number(order.sale_price) * qty).toFixed(2), order.month, order.order_no || null]
+        );
+      }
+      if (creditTypes.includes('commission')) {
+        await client.query(
+          `INSERT INTO credits (source_invoice_id, credit_type, sku, sku_name, amount, source_month, source, order_no)
+           VALUES ($1,'commission',$2,$3,$4,$5,'return_processed',$6)`,
+          [order.invoice_id, order.sku, skuName, +(Number(order.comm_total) * qty).toFixed(2), order.month, order.order_no || null]
+        );
+      }
     }
 
     if (disposition === 'before') {
