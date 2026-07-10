@@ -648,21 +648,6 @@ app.get('/api/credits', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Temporary debug endpoint — remove after confirming scopes
-app.get('/api/shopify-scopes', async (req, res) => {
-  try {
-    const store = process.env.SHOPIFY_STORE;
-    const clientId = process.env.SHOPIFY_CLIENT_ID;
-    const clientSecret = process.env.SHOPIFY_CLIENT_SECRET;
-    const token = await getAccessToken(store, clientId, clientSecret);
-    const r = await fetch(`https://${store}/admin/oauth/access_scopes.json`, {
-      headers: { 'X-Shopify-Access-Token': token },
-    });
-    const data = await r.json();
-    res.json({ status: r.status, scopes: data });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
 // ── SHIPMENTS ─────────────────────────────────────────────────────────────────
 app.get('/api/shipments', async (req, res) => {
   try {
