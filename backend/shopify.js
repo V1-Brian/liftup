@@ -127,12 +127,14 @@ function processOrders(shopifyOrders, skuMap) {
 
 /**
  * Find a Shopify order by its name (e.g. "#11407") and create a fulfillment
- * with the given UPS tracking number using the legacy fulfillments API
- * (requires write_fulfillments scope only — avoids the newer fulfillment_orders
- * API which requires the separate read_merchant_managed_fulfillment_orders scope).
+ * with the given UPS tracking number.
+ *
+ * Requires scopes: read_orders, read_merchant_managed_fulfillment_orders,
+ *                  write_merchant_managed_fulfillment_orders
  *
  * Returns { shopify_order_id, fulfillment_id } on success.
- * Throws on API error. If already fulfilled, returns shopify_order_id with fulfillment_id null.
+ * Returns { shopify_order_id, fulfillment_id: null } if already fulfilled.
+ * Throws on API error or if no open fulfillment order is found.
  */
 async function updateShopifyTracking(store, token, orderName, trackingNumber) {
   // 1. Find the order by name
@@ -148,17 +150,31 @@ async function updateShopifyTracking(store, token, orderName, trackingNumber) {
     return { shopify_order_id: order.id, fulfillment_id: null };
   }
 
-  // 2. Create fulfillment with tracking using legacy API (write_fulfillments scope)
-  const fulfillUrl = `https://${store}/admin/api/${SHOPIFY_API_VERSION}/orders/${order.id}/fulfillments.json`;
+  // 2. Get open fulfillment orders (requires read_merchant_managed_fulfillment_orders)
+  const foUrl = `https://${store}/admin/api/${SHOPIFY_API_VERSION}/orders/${order.id}/fulfillment_orders.json`;
+  const foRes = await fetch(foUrl, { headers: { 'X-Shopify-Access-Token': token } });
+  if (!foRes.ok) throw new Error(`Shopify fulfillment orders ${foRes.status}: ${await foRes.text()}`);
+  const { fulfillment_orders } = await foRes.json();
+
+  const openFO = (fulfillment_orders || []).find(fo =>
+    fo.status === 'open' || fo.status === 'in_progress' || fo.status === 'scheduled'
+  );
+  if (!openFO) throw new Error(`No open fulfillment order for ${orderName} (status: ${order.fulfillment_status})`);
+
+  // 3. Create fulfillment with tracking (requires write_merchant_managed_fulfillment_orders)
+  const fulfillUrl = `https://${store}/admin/api/${SHOPIFY_API_VERSION}/fulfillments.json`;
   const fulfillRes = await fetch(fulfillUrl, {
     method: 'POST',
     headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       fulfillment: {
-        tracking_number:  trackingNumber,
-        tracking_company: 'UPS',
-        tracking_url:     `https://www.ups.com/track?tracknum=${trackingNumber}`,
-        notify_customer:  true,
+        line_items_by_fulfillment_order: [{ fulfillment_order_id: openFO.id }],
+        tracking_info: {
+          number:  trackingNumber,
+          company: 'UPS',
+          url:     `https://www.ups.com/track?tracknum=${trackingNumber}`,
+        },
+        notify_customer: true,
       },
     }),
   });
