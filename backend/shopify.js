@@ -99,7 +99,7 @@ function processOrders(shopifyOrders, skuMap) {
     if (order.cancelled_at) continue;
     const date           = (order.created_at || '').slice(0, 10);
     const channel        = detectChannel(order);
-    const amazonOrderId  = channel === 'Amazon' ? extractAmazonOrderId(order) : null;
+    const amazonOrderId  = extractAmazonOrderId(order);
 
     for (const item of order.line_items || []) {
       if (!item.sku) continue;
