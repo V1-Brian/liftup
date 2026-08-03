@@ -122,7 +122,7 @@ New table:
 New column on `orders`:
 - `amazon_order_id VARCHAR(40)` — Amazon Order ID for MCF orders (e.g. `113-XXXXXXX-XXXXXXX`); populated automatically during Shopify sync from `order.note_attributes`; used to match Amazon "Refund Initiated" emails to orders. Only populated on orders synced/re-saved after this migration shipped — earlier invoices (March–May 2026) largely predate it and need a re-sync to backfill. As of 2026-07-10, `extractAmazonOrderId()` runs regardless of detected sales channel (previously gated behind `channel === 'Amazon'`, which would have silently skipped a Shopify-storefront order fulfilled via Amazon MCF).
 
-**Known gap**: there's no rematch/retry mechanism — if a `pending_returns` row is created before its order exists in our `orders` table (e.g. a return notification arrives for an order that hasn't been synced into an invoice yet), it stays `unmatched` forever even after that order gets synced later. Must be linked manually (direct DB update on `pending_returns.order_id`/`invoice_id`) or the order can instead be marked `after` directly in that month's invoice editor when it's built.
+**Auto-reconciliation**: both the invoice save (`POST /api/invoices/:month`) and Shopify sync (`POST /api/sync/:month`) run a reconciliation UPDATE after inserting orders. Any `pending_returns` rows with `status='unmatched'` whose `amazon_order_id` now matches a newly written order are automatically promoted to `status='pending'`. So re-syncing or re-saving the relevant month's invoice is sufficient to auto-link a previously unmatched return — no manual DB update needed.
 
 ### Migration v6 (migrate_v6.js — applied 2026-07-01)
 New table:
