@@ -175,6 +175,20 @@ app.post('/api/invoices/:month', async (req, res) => {
       );
     }
 
+    // ── Reconcile unmatched pending returns ──────────────────────────────────
+    // Runs after orders are (re)inserted so any returns whose amazon_order_id
+    // now matches an order row get promoted from 'unmatched' → 'pending'.
+    await client.query(`
+      UPDATE pending_returns pr
+      SET order_id   = o.id,
+          invoice_id = o.invoice_id,
+          status     = 'pending'
+      FROM orders o
+      WHERE pr.status          = 'unmatched'
+        AND pr.amazon_order_id IS NOT NULL
+        AND o.amazon_order_id  = pr.amazon_order_id
+    `);
+
     // Replace adjustments (preserve any auto-applied credit adjustments passed back from frontend)
     await client.query('DELETE FROM adjustments WHERE invoice_id=$1', [invoiceId]);
     for (const a of adjustments) {
@@ -362,6 +376,18 @@ async function syncMonth(month) {
          o.amazon_order_id || null]
       );
     }
+
+    // ── Reconcile unmatched pending returns ──────────────────────────────────
+    await client.query(`
+      UPDATE pending_returns pr
+      SET order_id   = o.id,
+          invoice_id = o.invoice_id,
+          status     = 'pending'
+      FROM orders o
+      WHERE pr.status          = 'unmatched'
+        AND pr.amazon_order_id IS NOT NULL
+        AND o.amazon_order_id  = pr.amazon_order_id
+    `);
 
     // Re-insert preserved adjustments
     await client.query('DELETE FROM adjustments WHERE invoice_id=$1', [invoiceId]);
