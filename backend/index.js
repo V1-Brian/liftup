@@ -658,6 +658,101 @@ app.post('/api/credits/:id/apply', async (req, res) => {
   }
 });
 
+app.post('/api/credits/send-snapshot', async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT c.*, ri.month AS receiving_month
+      FROM credits c
+      LEFT JOIN invoices ri ON ri.id = c.receiving_invoice_id
+      WHERE c.status = 'open'
+      ORDER BY c.source_month, c.credit_type, c.id
+    `);
+
+    if (!rows.length) return res.status(400).json({ error: 'No open credits to send' });
+
+    const liftupEmail = process.env.LIFTUP_EMAIL;
+    const ourEmail    = process.env.OUR_EMAIL;
+    if (!liftupEmail) return res.status(500).json({ error: 'LIFTUP_EMAIL not configured' });
+
+    function fmt(n) {
+      return '$' + Number(n).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    }
+    function fmtMonth(m) {
+      const [y, mo] = m.split('-');
+      const names = ['January','February','March','April','May','June',
+                     'July','August','September','October','November','December'];
+      return `${names[parseInt(mo,10)-1]} ${y}`;
+    }
+
+    const totalRetail     = rows.filter(r => r.credit_type === 'retail')    .reduce((s, r) => s + Number(r.amount), 0);
+    const totalCommission = rows.filter(r => r.credit_type === 'commission').reduce((s, r) => s + Number(r.amount), 0);
+    const sentDate = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
+
+    const rows_html = rows.map(c => `
+      <tr>
+        <td style="padding:8px 12px;border-bottom:1px solid #eee;">${fmtMonth(c.source_month)}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;">${c.order_no || '—'}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;">${c.sku}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;color:#555;">${c.sku_name || ''}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #eee;">
+          <span style="background:${c.credit_type==='retail'?'#fff3e0':'#e8f5e9'};color:${c.credit_type==='retail'?'#e65100':'#2e7d32'};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">
+            ${c.credit_type === 'retail' ? 'Retail' : 'Commission'}
+          </span>
+        </td>
+        <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right;font-weight:600;color:#c57800;">${fmt(c.amount)}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;color:#777;">
+          ${c.credit_type==='retail' ? 'Reduces amount owed to LiftUp' : 'Reduces commission owed to us'}
+        </td>
+      </tr>`).join('');
+
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:800px;margin:0 auto;color:#1a1a1a;">
+        <div style="background:#CC0000;padding:24px 32px;border-radius:6px 6px 0 0;">
+          <div style="color:#fff;font-size:22px;font-weight:700;letter-spacing:0.5px;">Open Credit Memo Summary</div>
+          <div style="color:rgba(255,255,255,0.85);font-size:13px;margin-top:4px;">As of ${sentDate}</div>
+        </div>
+        <div style="background:#fff;border:1px solid #e0e0e0;border-top:none;padding:24px 32px;">
+          <p style="margin:0 0 20px;font-size:14px;color:#444;">
+            The following credit memos are currently open and have not yet been applied to an invoice.
+            Retail credits reduce the balance we owe LiftUp; commission credits reduce the commission LiftUp owes us.
+          </p>
+          <table style="width:100%;border-collapse:collapse;font-size:13px;">
+            <thead>
+              <tr style="background:#f5f5f5;">
+                <th style="padding:10px 12px;text-align:left;font-size:11px;text-transform:uppercase;color:#888;letter-spacing:0.5px;">Source Month</th>
+                <th style="padding:10px 12px;text-align:left;font-size:11px;text-transform:uppercase;color:#888;letter-spacing:0.5px;">Order #</th>
+                <th style="padding:10px 12px;text-align:left;font-size:11px;text-transform:uppercase;color:#888;letter-spacing:0.5px;">SKU</th>
+                <th style="padding:10px 12px;text-align:left;font-size:11px;text-transform:uppercase;color:#888;letter-spacing:0.5px;">Product</th>
+                <th style="padding:10px 12px;text-align:left;font-size:11px;text-transform:uppercase;color:#888;letter-spacing:0.5px;">Type</th>
+                <th style="padding:10px 12px;text-align:right;font-size:11px;text-transform:uppercase;color:#888;letter-spacing:0.5px;">Amount</th>
+                <th style="padding:10px 12px;text-align:left;font-size:11px;text-transform:uppercase;color:#888;letter-spacing:0.5px;">Note</th>
+              </tr>
+            </thead>
+            <tbody>${rows_html}</tbody>
+          </table>
+          <div style="margin-top:20px;padding:16px;background:#f9f6f1;border-radius:6px;display:flex;gap:40px;">
+            ${totalRetail > 0 ? `<div><div style="font-size:11px;text-transform:uppercase;color:#888;letter-spacing:0.5px;">Total Retail Credits</div><div style="font-size:20px;font-weight:700;color:#e65100;margin-top:2px;">${fmt(totalRetail)}</div></div>` : ''}
+            ${totalCommission > 0 ? `<div><div style="font-size:11px;text-transform:uppercase;color:#888;letter-spacing:0.5px;">Total Commission Credits</div><div style="font-size:20px;font-weight:700;color:#2e7d32;margin-top:2px;">${fmt(totalCommission)}</div></div>` : ''}
+          </div>
+        </div>
+        <div style="padding:16px 32px;background:#f5f5f5;border:1px solid #e0e0e0;border-top:none;border-radius:0 0 6px 6px;font-size:12px;color:#888;">
+          Sent from the LiftUp commission tracking system · ${ourEmail || ''}
+        </div>
+      </div>`;
+
+    await sendEmail({
+      to:      liftupEmail,
+      cc:      ourEmail,
+      subject: `Open Credit Memo Summary — ${sentDate}`,
+      html,
+    });
+
+    res.json({ ok: true, count: rows.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/credits', async (req, res) => {
   try {
     const { rows } = await pool.query(`

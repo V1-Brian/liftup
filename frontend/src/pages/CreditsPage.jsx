@@ -15,6 +15,8 @@ export default function CreditsPage() {
   const [applyingId,    setApplyingId]    = useState(null)
   const [selectedMonth, setSelectedMonth] = useState('')
   const [applying,      setApplying]      = useState(false)
+  const [sending,       setSending]       = useState(false)
+  const [sendSuccess,   setSendSuccess]   = useState(false)
 
   useEffect(() => {
     Promise.all([api.listCredits(), api.listInvoices()])
@@ -26,6 +28,21 @@ export default function CreditsPage() {
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
   }, [])
+
+  async function handleSendSnapshot() {
+    setSending(true)
+    setSendSuccess(false)
+    setError(null)
+    try {
+      await api.sendCreditSnapshot()
+      setSendSuccess(true)
+      setTimeout(() => setSendSuccess(false), 4000)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setSending(false)
+    }
+  }
 
   async function handleApply(creditId) {
     if (!selectedMonth) return
@@ -58,9 +75,20 @@ export default function CreditsPage() {
               : 'All credits have been applied'}
           </div>
         </div>
-        <button className="btn btn-sm" onClick={() => setShowApplied(s => !s)}>
-          {showApplied ? 'Hide applied credits' : `Show applied credits (${applied.length})`}
-        </button>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          {sendSuccess && <span style={{ fontSize: 13, color: 'var(--green)' }}>✓ Sent</span>}
+          <button
+            className="btn btn-sm btn-primary"
+            onClick={handleSendSnapshot}
+            disabled={sending || open.length === 0}
+            title="Email open credits snapshot to LiftUp and us"
+          >
+            {sending ? 'Sending…' : '✉ Send snapshot'}
+          </button>
+          <button className="btn btn-sm" onClick={() => setShowApplied(s => !s)}>
+            {showApplied ? 'Hide applied' : `Show applied (${applied.length})`}
+          </button>
+        </div>
       </div>
 
       {error && <div className="alert alert-error">{error}</div>}

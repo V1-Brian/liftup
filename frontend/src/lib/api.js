@@ -31,8 +31,9 @@ export const api = {
   listPayments:      (type)        => req('GET',    `/api/payments${type ? `?type=${type}` : ''}`),
   createPayment:     (d)           => req('POST',   '/api/payments', d),
 
-  listCredits:       ()            => req('GET',    '/api/credits'),
-  applyCredit:       (id, month)   => req('POST',   `/api/credits/${id}/apply`, { invoice_month: month }),
+  listCredits:        ()            => req('GET',    '/api/credits'),
+  applyCredit:        (id, month)   => req('POST',   `/api/credits/${id}/apply`, { invoice_month: month }),
+  sendCreditSnapshot: ()            => req('POST',   '/api/credits/send-snapshot'),
 
   getUnmatchedEmails: ()           => req('GET',    '/api/email/unmatched'),
   resolveUnmatched:   (id)         => req('POST',   `/api/email/unmatched/${id}/resolve`),
