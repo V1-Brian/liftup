@@ -231,6 +231,7 @@ Both require `Authorization: Bearer <CRON_SECRET>` (sent automatically by Vercel
 | POST | `/api/payments` | Record/allocate a payment |
 | GET | `/api/credits` | Returns `{ open: [...], applied: [...] }` |
 | POST | `/api/credits/:id/apply` | Manually apply an open credit to a chosen invoice month |
+| POST | `/api/credits/send-snapshot` | Email open credits summary to `LIFTUP_EMAIL` CC `OUR_EMAIL`; triggered by "✉ Send snapshot" button on Credits page |
 | GET | `/api/email/poll` | Poll all 6 Zoho folders for new emails (cron every 4h + manual) |
 | GET | `/api/email/unmatched` | List unresolved unmatched emails |
 | POST | `/api/email/unmatched/:id/resolve` | Mark unmatched email resolved |
