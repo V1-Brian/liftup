@@ -17,6 +17,7 @@ export default function CreditsPage() {
   const [applying,      setApplying]      = useState(false)
   const [sending,       setSending]       = useState(false)
   const [sendSuccess,   setSendSuccess]   = useState(false)
+  const [deleting,      setDeleting]      = useState(null)
 
   useEffect(() => {
     Promise.all([api.listCredits(), api.listInvoices()])
@@ -28,6 +29,22 @@ export default function CreditsPage() {
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
   }, [])
+
+  async function handleDelete(id) {
+    if (!window.confirm('Delete this credit memo? This cannot be undone.')) return
+    setDeleting(id)
+    setError(null)
+    try {
+      await api.deleteCredit(id)
+      const credits = await api.listCredits()
+      setOpen(credits.open)
+      setApplied(credits.applied)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setDeleting(null)
+    }
+  }
 
   async function handleSendSnapshot() {
     setSending(true)
@@ -170,6 +187,12 @@ export default function CreditsPage() {
                       </button>
                     )}
                   </td>
+                  <td>
+                    <button className="btn btn-sm btn-danger" disabled={deleting === c.id}
+                      onClick={() => handleDelete(c.id)}>
+                      {deleting === c.id ? '…' : '×'}
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -198,6 +221,7 @@ export default function CreditsPage() {
                     <th style={{ textAlign: 'right' }}>Amount</th>
                     <th>Applied to</th>
                     <th>Applied date</th>
+                    <th></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -223,6 +247,12 @@ export default function CreditsPage() {
                       </td>
                       <td style={{ fontSize: 12, color: 'var(--text2)' }}>
                         {c.applied_at ? new Date(c.applied_at).toLocaleDateString() : '—'}
+                      </td>
+                      <td>
+                        <button className="btn btn-sm btn-danger" disabled={deleting === c.id}
+                          onClick={() => handleDelete(c.id)}>
+                          {deleting === c.id ? '…' : '×'}
+                        </button>
                       </td>
                     </tr>
                   ))}

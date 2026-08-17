@@ -33,6 +33,7 @@ export const api = {
 
   listCredits:        ()            => req('GET',    '/api/credits'),
   applyCredit:        (id, month)   => req('POST',   `/api/credits/${id}/apply`, { invoice_month: month }),
+  deleteCredit:       (id)          => req('DELETE',  `/api/credits/${id}`),
   sendCreditSnapshot: ()            => req('POST',   '/api/credits/send-snapshot'),
 
   getUnmatchedEmails: ()           => req('GET',    '/api/email/unmatched'),

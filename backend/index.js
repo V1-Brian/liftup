@@ -218,9 +218,17 @@ app.post('/api/invoices/:month', async (req, res) => {
     }
 
     // ── Auto-generate credits for 'after' orders ─────────────────────────────
-    // Only delete invoice_save credits — return_processed credits survive re-save
+    // Remove invoice_save credits regardless of status — if an order flipped from
+    // 'after' back to 'before', any applied credit must be undone too.
+    // First clean up adjustment rows on receiving invoices (credit_id FK).
+    await client.query(`
+      DELETE FROM adjustments
+      WHERE credit_id IN (
+        SELECT id FROM credits WHERE source_invoice_id=$1 AND source='invoice_save'
+      ) AND invoice_id != $1
+    `, [invoiceId]);
     await client.query(
-      `DELETE FROM credits WHERE source_invoice_id=$1 AND status='open' AND source='invoice_save'`, [invoiceId]
+      `DELETE FROM credits WHERE source_invoice_id=$1 AND source='invoice_save'`, [invoiceId]
     );
     const afterOrders = enriched.filter(o => o.status === 'after');
     for (const o of afterOrders) {
@@ -773,6 +781,31 @@ app.post('/api/credits/send-snapshot', async (req, res) => {
     res.json({ ok: true, count: rows.length });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/credits/:id', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: [credit] } = await client.query('SELECT * FROM credits WHERE id=$1', [req.params.id]);
+    if (!credit) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Credit not found' }); }
+
+    // If applied, remove the adjustment row on the receiving invoice
+    if (credit.status === 'applied' && credit.receiving_invoice_id) {
+      await client.query(
+        `DELETE FROM adjustments WHERE credit_id=$1 AND invoice_id=$2`,
+        [credit.id, credit.receiving_invoice_id]
+      );
+    }
+    await client.query('DELETE FROM credits WHERE id=$1', [credit.id]);
+    await client.query('COMMIT');
+    res.json({ ok: true });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
   }
 });
 
