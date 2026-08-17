@@ -265,6 +265,15 @@ export default function InvoicePage() {
             <div style={{ fontWeight: 600 }}>{orders.length} line items</div>
             <div className="gap-2">
               <button className="btn btn-sm" onClick={() => setTab('import')}>← Re-import</button>
+              <button className="btn btn-sm" onClick={() => {
+                const firstSku = skus[0]?.sku || ''
+                setOrders(prev => [...prev, {
+                  isManual: true, order_date: new Date().toISOString().slice(0,10),
+                  order_no: '', sku: firstSku, qty: 1,
+                  sale_price: skuMap[firstSku]?.shopify_price || 0,
+                  channel: 'Shopify', status: 'sold', note: '',
+                }])
+              }}>+ Add row</button>
               <button className="btn btn-sm btn-primary" onClick={() => setTab('invoice')}>View invoice →</button>
             </div>
           </div>
@@ -275,14 +284,62 @@ export default function InvoicePage() {
               </thead>
               <tbody>
                 {orders.map((o, i) => (
-                  <tr key={i} style={{ background: o.status === 'before' ? '#fff8f8' : o.status === 'after' ? '#fffbf0' : undefined }}>
-                    <td style={{ fontSize: 12 }}>{o.order_date || o.date || '—'}</td>
-                    <td style={{ color: 'var(--text2)', fontSize: 12 }}>{o.order_no}</td>
-                    <td style={{ fontWeight: 600, fontSize: 12 }}>{o.sku}</td>
+                  <tr key={i} style={{ background: o.status === 'before' ? '#fff8f8' : o.status === 'after' ? '#fffbf0' : o.isManual ? 'var(--bg2)' : undefined }}>
+                    <td style={{ fontSize: 12 }}>
+                      {o.isManual
+                        ? <input type="date" value={o.order_date || ''} style={{ fontSize: 11, width: 120 }}
+                            onChange={e => setOrders(prev => prev.map((r,j) => j===i ? {...r,order_date:e.target.value} : r))} />
+                        : o.order_date || o.date || '—'}
+                    </td>
+                    <td style={{ color: 'var(--text2)', fontSize: 12 }}>
+                      {o.isManual
+                        ? <input type="text" value={o.order_no || ''} placeholder="Order #" style={{ fontSize: 11, width: 80 }}
+                            onChange={e => setOrders(prev => prev.map((r,j) => j===i ? {...r,order_no:e.target.value} : r))} />
+                        : o.order_no}
+                    </td>
+                    <td style={{ fontWeight: 600, fontSize: 12 }}>
+                      {o.isManual
+                        ? <select value={o.sku} style={{ fontSize: 11 }}
+                            onChange={e => {
+                              const s = skuMap[e.target.value]
+                              setOrders(prev => prev.map((r,j) => j===i ? {
+                                ...r, sku: e.target.value,
+                                sale_price: r.channel === 'Amazon' ? (s?.amazon_price||0) : (s?.shopify_price||0),
+                              } : r))
+                            }}>
+                            {skus.map(s => <option key={s.sku} value={s.sku}>{s.sku}</option>)}
+                          </select>
+                        : o.sku}
+                    </td>
                     <td style={{ fontSize: 12, color: 'var(--text2)' }}>{skuMap[o.sku]?.name || '?'}</td>
-                    <td style={{ textAlign: 'right' }}>{fmt(o.sale_price)}</td>
-                    <td style={{ textAlign: 'right' }}>{o.qty}</td>
-                    <td><span className={`badge badge-${(o.channel||'shopify').toLowerCase()}`}>{o.channel}</span></td>
+                    <td style={{ textAlign: 'right' }}>
+                      {o.isManual
+                        ? <input type="number" value={o.sale_price} step="0.01" style={{ fontSize: 11, width: 80, textAlign: 'right' }}
+                            onChange={e => setOrders(prev => prev.map((r,j) => j===i ? {...r,sale_price:parseFloat(e.target.value)||0} : r))} />
+                        : fmt(o.sale_price)}
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      {o.isManual
+                        ? <input type="number" value={o.qty} min="1" style={{ fontSize: 11, width: 48, textAlign: 'right' }}
+                            onChange={e => setOrders(prev => prev.map((r,j) => j===i ? {...r,qty:parseInt(e.target.value)||1} : r))} />
+                        : o.qty}
+                    </td>
+                    <td>
+                      {o.isManual
+                        ? <select value={o.channel} style={{ fontSize: 11 }}
+                            onChange={e => {
+                              const s = skuMap[o.sku]
+                              setOrders(prev => prev.map((r,j) => j===i ? {
+                                ...r, channel: e.target.value,
+                                sale_price: e.target.value === 'Amazon' ? (s?.amazon_price||r.sale_price) : (s?.shopify_price||r.sale_price),
+                              } : r))
+                            }}>
+                            <option value="Shopify">Shopify</option>
+                            <option value="Amazon">Amazon</option>
+                            <option value="Walmart">Walmart</option>
+                          </select>
+                        : <span className={`badge badge-${(o.channel||'shopify').toLowerCase()}`}>{o.channel}</span>}
+                    </td>
                     <td>
                       <select value={o.status} style={{ fontSize: 12, padding: '3px 6px' }}
                         onChange={e => setOrders(prev => prev.map((r,j) => j===i ? {...r,status:e.target.value} : r))}>
