@@ -109,6 +109,10 @@ app.post('/api/invoices/:month', async (req, res) => {
       orders = [], adjustments = [],
     } = req.body;
 
+    // Check before upsert so we know whether to auto-apply credits
+    const { rows: preExisting } = await client.query('SELECT id FROM invoices WHERE month=$1', [month]);
+    const isFirstSave = preExisting.length === 0;
+
     // Get current SKUs for commission calculation
     const { rows: skus } = await client.query('SELECT * FROM sku_config WHERE active=TRUE');
     const skuMap = Object.fromEntries(skus.map(s => [s.sku, s]));
@@ -189,14 +193,28 @@ app.post('/api/invoices/:month', async (req, res) => {
         AND o.amazon_order_id  = pr.amazon_order_id
     `);
 
-    // Replace adjustments (preserve any auto-applied credit adjustments passed back from frontend)
+    // ── Reset credits that were applied to this invoice ──────────────────────
+    // Any credit whose adjustment the user removed will be reset to open.
+    // credits with credit_id still in the passed adjustments get re-marked applied below.
+    await client.query(`
+      UPDATE credits SET status='open', receiving_invoice_id=NULL, applied_at=NULL
+      WHERE receiving_invoice_id=$1 AND status='applied'
+    `, [invoiceId]);
+
+    // Replace adjustments — preserve credit_id so we can re-link credits
     await client.query('DELETE FROM adjustments WHERE invoice_id=$1', [invoiceId]);
     for (const a of adjustments) {
       await client.query(
-        `INSERT INTO adjustments (invoice_id, label, amount, adj_type)
-         VALUES ($1,$2,$3,$4)`,
-        [invoiceId, a.label, a.amount, a.adj_type || 'other']
+        `INSERT INTO adjustments (invoice_id, label, amount, adj_type, credit_id)
+         VALUES ($1,$2,$3,$4,$5)`,
+        [invoiceId, a.label, a.amount, a.adj_type || 'other', a.credit_id || null]
       );
+      if (a.credit_id) {
+        await client.query(
+          `UPDATE credits SET status='applied', receiving_invoice_id=$1, applied_at=NOW() WHERE id=$2`,
+          [invoiceId, a.credit_id]
+        );
+      }
     }
 
     // ── Auto-generate credits for 'after' orders ─────────────────────────────
@@ -222,21 +240,26 @@ app.post('/api/invoices/:month', async (req, res) => {
       );
     }
 
-    // ── Auto-apply open credits from prior months ─────────────────────────────
+    // ── Auto-apply open credits from prior months (first save only) ───────────
+    // On subsequent saves the user controls which credits appear via the
+    // adjustments they pass — removing one resets it to open (done above).
+    // New credits after first save must be applied manually via the Credits page.
     const { rows: openCredits } = await client.query(
       `SELECT * FROM credits WHERE status='open' AND source_month < $1 ORDER BY source_month, id`,
       [month]
     );
-    for (const credit of openCredits) {
-      const label = `Credit memo - ${credit.sku_name} (from ${credit.source_month})`;
-      await client.query(
-        `INSERT INTO adjustments (invoice_id, label, amount, adj_type) VALUES ($1,$2,$3,'credit')`,
-        [invoiceId, label, -Number(credit.amount)]
-      );
-      await client.query(
-        `UPDATE credits SET status='applied', receiving_invoice_id=$1, applied_at=NOW() WHERE id=$2`,
-        [invoiceId, credit.id]
-      );
+    if (isFirstSave) {
+      for (const credit of openCredits) {
+        const label = `Credit memo - ${credit.sku_name} (from ${credit.source_month})`;
+        await client.query(
+          `INSERT INTO adjustments (invoice_id, label, amount, adj_type, credit_id) VALUES ($1,$2,$3,'credit',$4)`,
+          [invoiceId, label, -Number(credit.amount), credit.id]
+        );
+        await client.query(
+          `UPDATE credits SET status='applied', receiving_invoice_id=$1, applied_at=NOW() WHERE id=$2`,
+          [invoiceId, credit.id]
+        );
+      }
     }
 
     await client.query('COMMIT');
@@ -248,7 +271,7 @@ app.post('/api/invoices/:month', async (req, res) => {
     const { rows: finalAdj } = await client.query(
       'SELECT * FROM adjustments WHERE invoice_id=$1 ORDER BY id', [invoiceId]
     );
-    res.json({ ...inv[0], orders: finalOrders, adjustments: finalAdj, applied_credits: openCredits });
+    res.json({ ...inv[0], orders: finalOrders, adjustments: finalAdj, applied_credits: isFirstSave ? openCredits : [] });
   } catch (e) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: e.message });
@@ -320,7 +343,7 @@ async function syncMonth(month) {
     let adjustments = [];
     if (prev.id) {
       const { rows: prevAdj } = await client.query(
-        'SELECT label, amount, adj_type FROM adjustments WHERE invoice_id=$1', [prev.id]
+        'SELECT label, amount, adj_type, credit_id FROM adjustments WHERE invoice_id=$1', [prev.id]
       );
       adjustments = prevAdj;
     }
@@ -389,12 +412,12 @@ async function syncMonth(month) {
         AND o.amazon_order_id  = pr.amazon_order_id
     `);
 
-    // Re-insert preserved adjustments
+    // Re-insert preserved adjustments (with credit_id so links survive re-sync)
     await client.query('DELETE FROM adjustments WHERE invoice_id=$1', [invoiceId]);
     for (const a of adjustments) {
       await client.query(
-        `INSERT INTO adjustments (invoice_id, label, amount, adj_type) VALUES ($1,$2,$3,$4)`,
-        [invoiceId, a.label, a.amount, a.adj_type || 'other']
+        `INSERT INTO adjustments (invoice_id, label, amount, adj_type, credit_id) VALUES ($1,$2,$3,$4,$5)`,
+        [invoiceId, a.label, a.amount, a.adj_type || 'other', a.credit_id || null]
       );
     }
 
@@ -640,8 +663,8 @@ app.post('/api/credits/:id/apply', async (req, res) => {
 
     const label = `Credit memo - ${credit.sku_name} (from ${credit.source_month})`;
     await client.query(
-      `INSERT INTO adjustments (invoice_id, label, amount, adj_type) VALUES ($1,$2,$3,'credit')`,
-      [invoice.id, label, -Number(credit.amount)]
+      `INSERT INTO adjustments (invoice_id, label, amount, adj_type, credit_id) VALUES ($1,$2,$3,'credit',$4)`,
+      [invoice.id, label, -Number(credit.amount), credit.id]
     );
     await client.query(
       `UPDATE credits SET status='applied', receiving_invoice_id=$1, applied_at=NOW() WHERE id=$2`,
