@@ -114,10 +114,13 @@ export default function InvoicePage() {
     return calcCommission(s, Number(o.sale_price), o.channel)
   }
 
-  const totalRetail = sold.reduce((s, o) => s + Number(o.sale_price) * (o.qty || 1), 0)
-  const totalComm   = sold.reduce((s, o) => s + getComm(o).total * (o.qty || 1), 0)
-  const totalCredit = after.reduce((s, o) => s + Number(o.sale_price) * (o.qty || 1), 0)
-  const adjTotal    = adjustments.reduce((s, a) => s + Number(a.amount), 0)
+  const totalRetail  = sold.reduce((s, o) => s + Number(o.sale_price) * (o.qty || 1), 0)
+  const totalComm    = sold.reduce((s, o) => s + getComm(o).total * (o.qty || 1), 0)
+  const totalCredit  = after.reduce((s, o) => s + Number(o.sale_price) * (o.qty || 1), 0)
+  const retailAdj    = adjustments.filter(a => a.adj_type !== 'commission_credit')
+  const commAdj      = adjustments.filter(a => a.adj_type === 'commission_credit')
+  const adjTotal     = retailAdj.reduce((s, a) => s + Number(a.amount), 0)
+  const commAdjTotal = commAdj.reduce((s, a) => s + Number(a.amount), 0)
 
   // SKU roll-up
   const rollup = {}
@@ -403,8 +406,8 @@ export default function InvoicePage() {
           <div className="metric-grid">
             <div className="metric"><div className="metric-label">Total retail</div><div className="metric-value">{fmt(totalRetail)}</div><div className="metric-note">{sold.length} units sold</div></div>
             <div className="metric"><div className="metric-label">Mfr invoices us</div><div className="metric-value">{fmt(totalRetail + adjTotal)}</div>{adjTotal !== 0 && <div className="metric-note">{fmt(adjTotal)} adj.</div>}</div>
-            <div className="metric"><div className="metric-label">We invoice mfr</div><div className="metric-value green">{fmt(totalComm)}</div></div>
-            <div className="metric"><div className="metric-label">Net owed to mfr</div><div className="metric-value">{fmt(totalRetail + adjTotal - totalComm)}</div></div>
+            <div className="metric"><div className="metric-label">We invoice mfr</div><div className="metric-value green">{fmt(totalComm + commAdjTotal)}</div>{commAdjTotal !== 0 && <div className="metric-note">{fmt(commAdjTotal)} credit</div>}</div>
+            <div className="metric"><div className="metric-label">Net owed to mfr</div><div className="metric-value">{fmt(totalRetail + adjTotal - totalComm - commAdjTotal)}</div></div>
             {totalCredit > 0 && <div className="metric"><div className="metric-label">Credit memos</div><div className="metric-value" style={{color:'var(--amber)'}}>{fmt(totalCredit)}</div><div className="metric-note">Pending</div></div>}
           </div>
 
@@ -437,7 +440,7 @@ export default function InvoicePage() {
                         <td style={{textAlign:'right',fontWeight:600,color:'var(--amber)'}}>CREDIT MEMO ⚠</td>
                       </tr>
                     ))}
-                    {adjustments.map((a,i) => (
+                    {retailAdj.map((a,i) => (
                       <tr key={'adj'+i}>
                         <td colSpan={5} style={{color:'var(--text2)',fontSize:12,fontStyle:'italic'}}>{a.label} ({a.adj_type})</td>
                         <td style={{textAlign:'right',fontWeight:600,color:Number(a.amount)<0?'var(--red)':undefined}}>{fmt(a.amount)}</td>
@@ -482,8 +485,14 @@ export default function InvoicePage() {
                         </tr>
                       )
                     })}
+                    {commAdj.map((a,i) => (
+                      <tr key={'cadj'+i}>
+                        <td colSpan={6} style={{color:'var(--text2)',fontSize:12,fontStyle:'italic'}}>{a.label}</td>
+                        <td style={{textAlign:'right',fontWeight:600,color:'var(--amber)'}}>{fmt(a.amount)}</td>
+                      </tr>
+                    ))}
                   </tbody>
-                  <tfoot><tr><td colSpan={6} style={{padding:'10px'}}>Total commission owed to us</td><td style={{textAlign:'right',padding:'10px',color:'var(--green)'}}>{fmt(totalComm)}</td></tr></tfoot>
+                  <tfoot><tr><td colSpan={6} style={{padding:'10px'}}>Total commission owed to us</td><td style={{textAlign:'right',padding:'10px',color:'var(--green)'}}>{fmt(totalComm + commAdjTotal)}</td></tr></tfoot>
                 </table>
               </div>
             </div>

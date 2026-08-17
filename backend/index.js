@@ -258,10 +258,11 @@ app.post('/api/invoices/:month', async (req, res) => {
     );
     if (isFirstSave) {
       for (const credit of openCredits) {
-        const label = `Credit memo - ${credit.sku_name} (from ${credit.source_month})`;
+        const label   = `Credit memo - ${credit.sku_name} (from ${credit.source_month})`;
+        const adjType = credit.credit_type === 'commission' ? 'commission_credit' : 'credit';
         await client.query(
-          `INSERT INTO adjustments (invoice_id, label, amount, adj_type, credit_id) VALUES ($1,$2,$3,'credit',$4)`,
-          [invoiceId, label, -Number(credit.amount), credit.id]
+          `INSERT INTO adjustments (invoice_id, label, amount, adj_type, credit_id) VALUES ($1,$2,$3,$4,$5)`,
+          [invoiceId, label, -Number(credit.amount), adjType, credit.id]
         );
         await client.query(
           `UPDATE credits SET status='applied', receiving_invoice_id=$1, applied_at=NOW() WHERE id=$2`,
@@ -529,7 +530,8 @@ app.get('/api/invoices/payment-status', async (_, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT i.*,
-        COALESCE(SUM(a.amount), 0) AS adj_sum
+        COALESCE(SUM(CASE WHEN a.adj_type != 'commission_credit' THEN a.amount ELSE 0 END), 0) AS retail_adj_sum,
+        COALESCE(SUM(CASE WHEN a.adj_type  = 'commission_credit' THEN a.amount ELSE 0 END), 0) AS comm_adj_sum
       FROM invoices i
       LEFT JOIN adjustments a ON a.invoice_id = i.id
       GROUP BY i.id
@@ -537,7 +539,10 @@ app.get('/api/invoices/payment-status', async (_, res) => {
     `);
     const result = rows.map(r => ({
       ...r,
-      net_owed_to_liftup: +(Number(r.total_retail) + Number(r.adj_sum) - Number(r.total_commission)).toFixed(2),
+      net_owed_to_liftup: +(
+        Number(r.total_retail) + Number(r.retail_adj_sum) -
+        Number(r.total_commission) - Number(r.comm_adj_sum)
+      ).toFixed(2),
     }));
     res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -669,10 +674,11 @@ app.post('/api/credits/:id/apply', async (req, res) => {
     );
     if (!invoice) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Invoice not found for that month' }); }
 
-    const label = `Credit memo - ${credit.sku_name} (from ${credit.source_month})`;
+    const label   = `Credit memo - ${credit.sku_name} (from ${credit.source_month})`;
+    const adjType = credit.credit_type === 'commission' ? 'commission_credit' : 'credit';
     await client.query(
-      `INSERT INTO adjustments (invoice_id, label, amount, adj_type, credit_id) VALUES ($1,$2,$3,'credit',$4)`,
-      [invoice.id, label, -Number(credit.amount), credit.id]
+      `INSERT INTO adjustments (invoice_id, label, amount, adj_type, credit_id) VALUES ($1,$2,$3,$4,$5)`,
+      [invoice.id, label, -Number(credit.amount), adjType, credit.id]
     );
     await client.query(
       `UPDATE credits SET status='applied', receiving_invoice_id=$1, applied_at=NOW() WHERE id=$2`,
