@@ -76,6 +76,30 @@ app.get('/api/invoices', async (_, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── PAYMENT STATUS (for allocation modal) ───────────────────────────────────
+// Must be registered before /:month or Express will intercept it as month='payment-status'
+app.get('/api/invoices/payment-status', async (_, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT i.*,
+        COALESCE(SUM(CASE WHEN a.adj_type != 'commission_credit' THEN a.amount ELSE 0 END), 0) AS retail_adj_sum,
+        COALESCE(SUM(CASE WHEN a.adj_type  = 'commission_credit' THEN a.amount ELSE 0 END), 0) AS comm_adj_sum
+      FROM invoices i
+      LEFT JOIN adjustments a ON a.invoice_id = i.id
+      GROUP BY i.id
+      ORDER BY i.month DESC
+    `);
+    const result = rows.map(r => ({
+      ...r,
+      net_owed_to_liftup: +(
+        Number(r.total_retail) + Number(r.retail_adj_sum) -
+        Number(r.total_commission) - Number(r.comm_adj_sum)
+      ).toFixed(2),
+    }));
+    res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── SINGLE INVOICE ──────────────────────────────────────────────────────────
 app.get('/api/invoices/:month', async (req, res) => {
   try {
@@ -546,29 +570,6 @@ app.get('/api/cron/monthly-sync', async (req, res) => {
     console.error(`Cron monthly-sync failed: ${month}`, e.message);
     res.status(500).json({ error: e.message, month, log });
   }
-});
-
-// ── PAYMENT STATUS (for allocation modal) ───────────────────────────────────
-app.get('/api/invoices/payment-status', async (_, res) => {
-  try {
-    const { rows } = await pool.query(`
-      SELECT i.*,
-        COALESCE(SUM(CASE WHEN a.adj_type != 'commission_credit' THEN a.amount ELSE 0 END), 0) AS retail_adj_sum,
-        COALESCE(SUM(CASE WHEN a.adj_type  = 'commission_credit' THEN a.amount ELSE 0 END), 0) AS comm_adj_sum
-      FROM invoices i
-      LEFT JOIN adjustments a ON a.invoice_id = i.id
-      GROUP BY i.id
-      ORDER BY i.month DESC
-    `);
-    const result = rows.map(r => ({
-      ...r,
-      net_owed_to_liftup: +(
-        Number(r.total_retail) + Number(r.retail_adj_sum) -
-        Number(r.total_commission) - Number(r.comm_adj_sum)
-      ).toFixed(2),
-    }));
-    res.json(result);
-  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── PAYMENTS ─────────────────────────────────────────────────────────────────
