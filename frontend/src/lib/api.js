@@ -25,6 +25,7 @@ export const api = {
   patchStatus:       (month, d)    => req('PATCH',  `/api/invoices/${month}/status`, d),
   deleteInvoice:     (month)       => req('DELETE', `/api/invoices/${month}`),
   getPaymentStatus:  ()            => req('GET',    '/api/invoices/payment-status'),
+  getInvoicePayments:(month)       => req('GET',    `/api/invoices/${month}/payments`),
 
   syncMonth:    (month)       => req('POST',   `/api/sync/${month}`),
 

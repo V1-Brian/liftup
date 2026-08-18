@@ -34,6 +34,7 @@ export default function InvoicePage() {
   const [dragOver,    setDragOver]    = useState(false)
   const [paymentModal, setPaymentModal] = useState(null) // null | 'liftup_invoice' | 'commission'
   const [invoiceId,   setInvoiceId]   = useState(null)
+  const [invoicePayments, setInvoicePayments] = useState({ liftup_invoice: [], commission: [] })
   const fileRef = useRef()
 
   const skuMap = Object.fromEntries(skus.map(s => [s.sku, s]))
@@ -41,8 +42,8 @@ export default function InvoicePage() {
   useEffect(() => {
     api.getSkus().then(setSkus)
     if (!isNew) {
-      api.getInvoice(routeMonth)
-        .then(inv => {
+      Promise.all([api.getInvoice(routeMonth), api.getInvoicePayments(routeMonth)])
+        .then(([inv, pmts]) => {
           setOrders(inv.orders || [])
           setAdjustments(inv.adjustments || [])
           setInvoiceId(inv.id)
@@ -58,6 +59,7 @@ export default function InvoicePage() {
             mfr_amount_paid:            Number(inv.mfr_amount_paid)            || 0,
             commission_amount_received: Number(inv.commission_amount_received) || 0,
           })
+          setInvoicePayments(pmts)
           setTab('invoice')
         })
         .catch(e => setError(e.message))
@@ -156,7 +158,7 @@ export default function InvoicePage() {
   async function refreshInvoiceStatus() {
     if (isNew) return
     try {
-      const inv = await api.getInvoice(month)
+      const [inv, pmts] = await Promise.all([api.getInvoice(month), api.getInvoicePayments(month)])
       setStatus(s => ({
         ...s,
         mfr_invoice_paid:           inv.mfr_invoice_paid           || false,
@@ -166,6 +168,7 @@ export default function InvoicePage() {
         mfr_amount_paid:            Number(inv.mfr_amount_paid)            || 0,
         commission_amount_received: Number(inv.commission_amount_received) || 0,
       }))
+      setInvoicePayments(pmts)
     } catch (_) {}
   }
 
@@ -655,6 +658,82 @@ export default function InvoicePage() {
                 )}
                 {status.commission_paid && <div style={{ marginTop: 6 }}><span className="badge badge-paid">✓ Commission received {status.commission_paid_date}</span></div>}
               </div>
+            </div>
+          </div>
+
+          {/* Payment activity */}
+          <div className="card">
+            <div className="card-title">Payment activity</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+
+              {/* We paid LiftUp */}
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>We paid LiftUp</div>
+                {invoicePayments.liftup_invoice.length === 0 ? (
+                  <div style={{ fontSize: 13, color: 'var(--text2)' }}>No payments recorded yet.</div>
+                ) : (
+                  <table style={{ width: '100%', fontSize: 13 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ textAlign: 'left', fontWeight: 500, color: 'var(--text2)', paddingBottom: 4 }}>Date</th>
+                        <th style={{ textAlign: 'right', fontWeight: 500, color: 'var(--text2)', paddingBottom: 4 }}>Amount</th>
+                        <th style={{ textAlign: 'left', fontWeight: 500, color: 'var(--text2)', paddingBottom: 4, paddingLeft: 12 }}>Reference</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {invoicePayments.liftup_invoice.map((p, i) => (
+                        <tr key={i}>
+                          <td style={{ padding: '4px 0' }}>{p.payment_date ? new Date(p.payment_date).toLocaleDateString() : '—'}</td>
+                          <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmt(p.allocated_amount)}</td>
+                          <td style={{ paddingLeft: 12, color: 'var(--text2)' }}>{p.reference || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr style={{ borderTop: '1px solid var(--border)' }}>
+                        <td style={{ paddingTop: 6, color: 'var(--text2)' }}>Total paid</td>
+                        <td style={{ paddingTop: 6, textAlign: 'right', fontWeight: 700 }}>{fmt(status.mfr_amount_paid)}</td>
+                        <td />
+                      </tr>
+                    </tfoot>
+                  </table>
+                )}
+              </div>
+
+              {/* Commission received from LiftUp */}
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>Commission received from LiftUp</div>
+                {invoicePayments.commission.length === 0 ? (
+                  <div style={{ fontSize: 13, color: 'var(--text2)' }}>No commission recorded yet.</div>
+                ) : (
+                  <table style={{ width: '100%', fontSize: 13 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ textAlign: 'left', fontWeight: 500, color: 'var(--text2)', paddingBottom: 4 }}>Date</th>
+                        <th style={{ textAlign: 'right', fontWeight: 500, color: 'var(--text2)', paddingBottom: 4 }}>Amount</th>
+                        <th style={{ textAlign: 'left', fontWeight: 500, color: 'var(--text2)', paddingBottom: 4, paddingLeft: 12 }}>Reference</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {invoicePayments.commission.map((p, i) => (
+                        <tr key={i}>
+                          <td style={{ padding: '4px 0' }}>{p.payment_date ? new Date(p.payment_date).toLocaleDateString() : '—'}</td>
+                          <td style={{ textAlign: 'right', fontWeight: 600, color: 'var(--green)' }}>{fmt(p.allocated_amount)}</td>
+                          <td style={{ paddingLeft: 12, color: 'var(--text2)' }}>{p.reference || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr style={{ borderTop: '1px solid var(--border)' }}>
+                        <td style={{ paddingTop: 6, color: 'var(--text2)' }}>Total received</td>
+                        <td style={{ paddingTop: 6, textAlign: 'right', fontWeight: 700, color: 'var(--green)' }}>{fmt(status.commission_amount_received)}</td>
+                        <td />
+                      </tr>
+                    </tfoot>
+                  </table>
+                )}
+              </div>
+
             </div>
           </div>
 

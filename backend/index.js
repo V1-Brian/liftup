@@ -94,6 +94,29 @@ app.get('/api/invoices/:month', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── INVOICE PAYMENT HISTORY ─────────────────────────────────────────────────
+app.get('/api/invoices/:month/payments', async (req, res) => {
+  try {
+    const { rows: inv } = await pool.query(
+      'SELECT id FROM invoices WHERE month=$1', [req.params.month]
+    );
+    if (!inv.length) return res.json({ liftup_invoice: [], commission: [] });
+    const invoiceId = inv[0].id;
+    const { rows } = await pool.query(`
+      SELECT p.payment_type, p.payment_date, p.reference, p.notes,
+             pa.amount AS allocated_amount
+      FROM payment_allocations pa
+      JOIN payments p ON p.id = pa.payment_id
+      WHERE pa.invoice_id = $1
+      ORDER BY p.payment_date ASC, p.id ASC
+    `, [invoiceId]);
+    res.json({
+      liftup_invoice: rows.filter(r => r.payment_type === 'liftup_invoice'),
+      commission:     rows.filter(r => r.payment_type === 'commission'),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── SAVE / UPSERT FULL INVOICE ───────────────────────────────────────────────
 app.post('/api/invoices/:month', async (req, res) => {
   const client = await pool.connect();
