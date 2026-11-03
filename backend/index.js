@@ -1469,9 +1469,12 @@ app.post('/api/returns/:id/process', async (req, res) => {
       const sold = allOrders.filter(o => o.status === 'sold');
       const totalRetail     = +sold.reduce((s, o) => s + Number(o.sale_price) * (o.qty||1), 0).toFixed(2);
       const totalCommission = +sold.reduce((s, o) => s + Number(o.comm_total) * (o.qty||1), 0).toFixed(2);
+      // Same formula as invoice save: credit total = retail value of 'after' orders
+      const totalCredit     = +allOrders.filter(o => o.status === 'after')
+        .reduce((s, o) => s + Number(o.sale_price) * (o.qty||1), 0).toFixed(2);
       await client.query(
-        `UPDATE invoices SET total_retail=$1, total_commission=$2, total_credit=0, updated_at=NOW() WHERE id=$3`,
-        [totalRetail, totalCommission, order.invoice_id]
+        `UPDATE invoices SET total_retail=$1, total_commission=$2, total_credit=$3, updated_at=NOW() WHERE id=$4`,
+        [totalRetail, totalCommission, totalCredit, order.invoice_id]
       );
     }
 
