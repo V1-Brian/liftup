@@ -258,7 +258,8 @@ app.post('/api/invoices/:month', async (req, res) => {
       );
       if (a.credit_id) {
         await client.query(
-          `UPDATE credits SET status='applied', receiving_invoice_id=$1, applied_at=NOW() WHERE id=$2`,
+          `UPDATE credits SET status='applied', receiving_invoice_id=$1, applied_at=NOW()
+           WHERE id=$2 AND status <> 'canceled'`,
           [invoiceId, a.credit_id]
         );
       }
@@ -267,32 +268,47 @@ app.post('/api/invoices/:month', async (req, res) => {
     // ── Auto-generate credits for 'after' orders ─────────────────────────────
     // Remove invoice_save credits regardless of status — if an order flipped from
     // 'after' back to 'before', any applied credit must be undone too.
+    // Canceled credits are kept as a permanent reference record: never deleted
+    // here, and never regenerated (so a re-save can't resurrect them as open).
     // First clean up adjustment rows on receiving invoices (credit_id FK).
     await client.query(`
       DELETE FROM adjustments
       WHERE credit_id IN (
-        SELECT id FROM credits WHERE source_invoice_id=$1 AND source='invoice_save'
+        SELECT id FROM credits
+        WHERE source_invoice_id=$1 AND source='invoice_save' AND status <> 'canceled'
       ) AND invoice_id != $1
     `, [invoiceId]);
     await client.query(
-      `DELETE FROM credits WHERE source_invoice_id=$1 AND source='invoice_save'`, [invoiceId]
+      `DELETE FROM credits WHERE source_invoice_id=$1 AND source='invoice_save' AND status <> 'canceled'`,
+      [invoiceId]
     );
+    const { rows: canceledRows } = await client.query(
+      `SELECT order_no, sku, credit_type FROM credits
+       WHERE source_invoice_id=$1 AND source='invoice_save' AND status='canceled' AND order_no IS NOT NULL`,
+      [invoiceId]
+    );
+    const canceledKeys = new Set(canceledRows.map(c => `${c.order_no}|${c.sku}|${c.credit_type}`));
+    const isCanceled = (o, type) => o.order_no && canceledKeys.has(`${o.order_no}|${o.sku}|${type}`);
     const afterOrders = enriched.filter(o => o.status === 'after');
     for (const o of afterOrders) {
       const s = skuMap[o.sku];
       const skuName = s ? s.name : o.sku;
       // Retail credit: reduces what we owe LiftUp
-      await client.query(
-        `INSERT INTO credits (source_invoice_id, credit_type, sku, sku_name, amount, source_month, source, order_no)
-         VALUES ($1,'retail',$2,$3,$4,$5,'invoice_save',$6)`,
-        [invoiceId, o.sku, skuName, +(Number(o.sale_price) * (o.qty || 1)).toFixed(2), month, o.order_no || null]
-      );
+      if (!isCanceled(o, 'retail')) {
+        await client.query(
+          `INSERT INTO credits (source_invoice_id, credit_type, sku, sku_name, amount, source_month, source, order_no)
+           VALUES ($1,'retail',$2,$3,$4,$5,'invoice_save',$6)`,
+          [invoiceId, o.sku, skuName, +(Number(o.sale_price) * (o.qty || 1)).toFixed(2), month, o.order_no || null]
+        );
+      }
       // Commission credit: reduces what LiftUp owes us
-      await client.query(
-        `INSERT INTO credits (source_invoice_id, credit_type, sku, sku_name, amount, source_month, source, order_no)
-         VALUES ($1,'commission',$2,$3,$4,$5,'invoice_save',$6)`,
-        [invoiceId, o.sku, skuName, +(o.total * (o.qty || 1)).toFixed(2), month, o.order_no || null]
-      );
+      if (!isCanceled(o, 'commission')) {
+        await client.query(
+          `INSERT INTO credits (source_invoice_id, credit_type, sku, sku_name, amount, source_month, source, order_no)
+           VALUES ($1,'commission',$2,$3,$4,$5,'invoice_save',$6)`,
+          [invoiceId, o.sku, skuName, +(o.total * (o.qty || 1)).toFixed(2), month, o.order_no || null]
+        );
+      }
     }
 
     // ── Auto-apply open credits from prior months (first save only) ───────────
@@ -814,6 +830,36 @@ app.post('/api/credits/send-snapshot', async (req, res) => {
   }
 });
 
+// Cancel an open credit: keeps the row for reference but it will never be
+// applied to any invoice (e.g. a return that happened in the same month as the
+// order, so there is nothing to credit). Only open credits can be canceled —
+// an applied credit must first be removed from its receiving invoice.
+app.post('/api/credits/:id/cancel', async (req, res) => {
+  try {
+    const reason = (req.body?.reason || '').trim() || null;
+    const { rows: [credit] } = await pool.query(
+      `UPDATE credits SET status='canceled', canceled_at=NOW(), cancel_reason=$2
+       WHERE id=$1 AND status='open' RETURNING *`,
+      [req.params.id, reason]
+    );
+    if (!credit) return res.status(404).json({ error: 'Open credit not found (only open credits can be canceled)' });
+    res.json(credit);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Undo a cancel — returns the credit to open.
+app.post('/api/credits/:id/restore', async (req, res) => {
+  try {
+    const { rows: [credit] } = await pool.query(
+      `UPDATE credits SET status='open', canceled_at=NULL, cancel_reason=NULL
+       WHERE id=$1 AND status='canceled' RETURNING *`,
+      [req.params.id]
+    );
+    if (!credit) return res.status(404).json({ error: 'Canceled credit not found' });
+    res.json(credit);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.delete('/api/credits/:id', async (req, res) => {
   const client = await pool.connect();
   try {
@@ -849,8 +895,9 @@ app.get('/api/credits', async (req, res) => {
       ORDER BY c.source_month DESC, c.id
     `);
     res.json({
-      open:    rows.filter(r => r.status === 'open'),
-      applied: rows.filter(r => r.status === 'applied'),
+      open:     rows.filter(r => r.status === 'open'),
+      applied:  rows.filter(r => r.status === 'applied'),
+      canceled: rows.filter(r => r.status === 'canceled'),
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1356,7 +1403,9 @@ app.get('/api/returns/pending', async (_, res) => {
 //
 // 'before' — return happened before billing; item should never have been invoiced.
 //            Order status set to 'before' (excluded from totals); invoice totals
-//            recalculated. No credits generated.
+//            recalculated. Retail + commission credits are still created, but
+//            already status='canceled' — a reference record of the return that
+//            is never applied to any invoice.
 app.post('/api/returns/:id/process', async (req, res) => {
   const { disposition, note, credit_types } = req.body;
   if (!['before', 'after'].includes(disposition)) {
@@ -1384,30 +1433,33 @@ app.post('/api/returns/:id/process', async (req, res) => {
       [ret.order_id]
     );
 
-    if (disposition === 'after') {
-      // Invoice already sent — original sale stands, totals unchanged.
-      // Only create open credits for the selected credit_types.
-      const skuName = order.sku_name || order.sku;
-      const qty     = order.qty || 1;
-
-      if (creditTypes.includes('retail')) {
+    // 'after'  → open credits for the selected credit_types (invoice already sent;
+    //             original sale stands, totals unchanged).
+    // 'before' → both credits, created already canceled, purely as a record.
+    {
+      const skuName  = order.sku_name || order.sku;
+      const qty      = order.qty || 1;
+      const isBefore = disposition === 'before';
+      const types    = isBefore ? ['retail', 'commission'] : creditTypes;
+      const amounts  = {
+        retail:     +(Number(order.sale_price) * qty).toFixed(2),
+        commission: +(Number(order.comm_total) * qty).toFixed(2),
+      };
+      for (const type of types) {
         await client.query(
-          `INSERT INTO credits (source_invoice_id, credit_type, sku, sku_name, amount, source_month, source, order_no)
-           VALUES ($1,'retail',$2,$3,$4,$5,'return_processed',$6)`,
-          [order.invoice_id, order.sku, skuName, +(Number(order.sale_price) * qty).toFixed(2), order.month, order.order_no || null]
-        );
-      }
-      if (creditTypes.includes('commission')) {
-        await client.query(
-          `INSERT INTO credits (source_invoice_id, credit_type, sku, sku_name, amount, source_month, source, order_no)
-           VALUES ($1,'commission',$2,$3,$4,$5,'return_processed',$6)`,
-          [order.invoice_id, order.sku, skuName, +(Number(order.comm_total) * qty).toFixed(2), order.month, order.order_no || null]
+          `INSERT INTO credits (source_invoice_id, credit_type, sku, sku_name, amount, source_month, source, order_no,
+                                status, canceled_at, cancel_reason)
+           VALUES ($1,$2,$3,$4,$5,$6,'return_processed',$7,$8,$9,$10)`,
+          [order.invoice_id, type, order.sku, skuName, amounts[type], order.month, order.order_no || null,
+           isBefore ? 'canceled' : 'open',
+           isBefore ? new Date() : null,
+           isBefore ? 'Returned before invoice' : null]
         );
       }
     }
 
     if (disposition === 'before') {
-      // Return before billing — exclude from invoice totals, no credits needed.
+      // Return before billing — exclude from invoice totals (credits were logged as canceled above).
       await client.query('UPDATE orders SET status=$1 WHERE id=$2', ['before', ret.order_id]);
 
       const { rows: allOrders } = await client.query(

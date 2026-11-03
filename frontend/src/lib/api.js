@@ -34,6 +34,8 @@ export const api = {
 
   listCredits:        ()            => req('GET',    '/api/credits'),
   applyCredit:        (id, month)   => req('POST',   `/api/credits/${id}/apply`, { invoice_month: month }),
+  cancelCredit:       (id, reason)  => req('POST',   `/api/credits/${id}/cancel`, { reason }),
+  restoreCredit:      (id)          => req('POST',   `/api/credits/${id}/restore`),
   deleteCredit:       (id)          => req('DELETE',  `/api/credits/${id}`),
   sendCreditSnapshot: ()            => req('POST',   '/api/credits/send-snapshot'),
 

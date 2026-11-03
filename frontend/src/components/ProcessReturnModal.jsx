@@ -87,7 +87,7 @@ export default function ProcessReturnModal({ returnItem, onClose, onProcessed })
             <>
               <p style={{ fontWeight: 600, marginBottom: '0.5rem' }}>When did this return occur?</p>
               <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: '1rem' }}>
-                This determines whether to exclude it from the original invoice totals (<em>same month</em>) or generate a credit memo (<em>after invoice was sent</em>).
+                This determines whether to exclude it from the original invoice totals (<em>same month</em> — credits are logged as canceled for reference, never applied) or generate a credit memo (<em>after invoice was sent</em>).
               </p>
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
                 <button className="btn" onClick={() => handle('before')} disabled={saving}>

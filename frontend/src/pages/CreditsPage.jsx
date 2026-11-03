@@ -7,6 +7,9 @@ export default function CreditsPage() {
   const navigate = useNavigate()
   const [open,        setOpen]        = useState([])
   const [applied,     setApplied]     = useState([])
+  const [canceled,    setCanceled]    = useState([])
+  const [showCanceled, setShowCanceled] = useState(false)
+  const [busyId,      setBusyId]      = useState(null)
   const [invoices,    setInvoices]    = useState([])
   const [loading,     setLoading]     = useState(true)
   const [error,       setError]       = useState(null)
@@ -22,13 +25,51 @@ export default function CreditsPage() {
   useEffect(() => {
     Promise.all([api.listCredits(), api.listInvoices()])
       .then(([credits, invs]) => {
-        setOpen(credits.open)
-        setApplied(credits.applied)
+        setCredits(credits)
         setInvoices(invs)
       })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
   }, [])
+
+  function setCredits(credits) {
+    setOpen(credits.open)
+    setApplied(credits.applied)
+    setCanceled(credits.canceled || [])
+  }
+
+  async function handleCancel(c) {
+    const reason = window.prompt(
+      `Cancel this ${c.credit_type} credit${c.order_no ? ` for order ${c.order_no}` : ''}?\n\n` +
+      'It stays on record for reference but will never be applied to an invoice.\n' +
+      'Reason (optional):',
+      'Returned in same month as order'
+    )
+    if (reason === null) return
+    setBusyId(c.id)
+    setError(null)
+    try {
+      await api.cancelCredit(c.id, reason)
+      setCredits(await api.listCredits())
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  async function handleRestore(id) {
+    setBusyId(id)
+    setError(null)
+    try {
+      await api.restoreCredit(id)
+      setCredits(await api.listCredits())
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setBusyId(null)
+    }
+  }
 
   async function handleDelete(id) {
     if (!window.confirm('Delete this credit memo? This cannot be undone.')) return
@@ -36,9 +77,7 @@ export default function CreditsPage() {
     setError(null)
     try {
       await api.deleteCredit(id)
-      const credits = await api.listCredits()
-      setOpen(credits.open)
-      setApplied(credits.applied)
+      setCredits(await api.listCredits())
     } catch (e) {
       setError(e.message)
     } finally {
@@ -67,9 +106,7 @@ export default function CreditsPage() {
     setError(null)
     try {
       await api.applyCredit(creditId, selectedMonth)
-      const credits = await api.listCredits()
-      setOpen(credits.open)
-      setApplied(credits.applied)
+      setCredits(await api.listCredits())
       setApplyingId(null)
       setSelectedMonth('')
     } catch (e) {
@@ -89,7 +126,7 @@ export default function CreditsPage() {
           <div className="page-sub">
             {open.length > 0
               ? `${open.length} open credit${open.length > 1 ? 's' : ''} — apply manually below or auto-applies on next invoice save`
-              : 'All credits have been applied'}
+              : 'No open credits'}
           </div>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
@@ -104,6 +141,9 @@ export default function CreditsPage() {
           </button>
           <button className="btn btn-sm" onClick={() => setShowApplied(s => !s)}>
             {showApplied ? 'Hide applied' : `Show applied (${applied.length})`}
+          </button>
+          <button className="btn btn-sm" onClick={() => setShowCanceled(s => !s)}>
+            {showCanceled ? 'Hide canceled' : `Show canceled (${canceled.length})`}
           </button>
         </div>
       </div>
@@ -182,9 +222,16 @@ export default function CreditsPage() {
                         </button>
                       </div>
                     ) : (
-                      <button className="btn btn-sm" onClick={() => { setApplyingId(c.id); setSelectedMonth('') }}>
-                        Apply to invoice →
-                      </button>
+                      <div style={{ display: 'flex', gap: '0.4rem' }}>
+                        <button className="btn btn-sm" onClick={() => { setApplyingId(c.id); setSelectedMonth('') }}>
+                          Apply to invoice →
+                        </button>
+                        <button className="btn btn-sm" disabled={busyId === c.id}
+                          title="Keep on record but never apply to an invoice (e.g. returned in the same month)"
+                          onClick={() => handleCancel(c)}>
+                          {busyId === c.id ? '…' : 'Cancel out'}
+                        </button>
+                      </div>
                     )}
                   </td>
                   <td>
@@ -247,6 +294,70 @@ export default function CreditsPage() {
                       </td>
                       <td style={{ fontSize: 12, color: 'var(--text2)' }}>
                         {c.applied_at ? new Date(c.applied_at).toLocaleDateString() : '—'}
+                      </td>
+                      <td>
+                        <button className="btn btn-sm btn-danger" disabled={deleting === c.id}
+                          onClick={() => handleDelete(c.id)}>
+                          {deleting === c.id ? '…' : '×'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Canceled credits — kept for reference only, never applied */}
+      {showCanceled && (
+        <>
+          <div className="card-title" style={{ marginTop: '1.5rem' }}>Canceled credits</div>
+          {canceled.length === 0 ? (
+            <div className="card">
+              <div className="empty-state" style={{ fontSize: 13, color: 'var(--text2)' }}>No canceled credits.</div>
+            </div>
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Source month</th>
+                    <th>Order #</th>
+                    <th>SKU</th>
+                    <th>Product</th>
+                    <th>Type</th>
+                    <th style={{ textAlign: 'right' }}>Amount</th>
+                    <th>Reason</th>
+                    <th>Canceled date</th>
+                    <th></th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {canceled.map(c => (
+                    <tr key={c.id} style={{ color: 'var(--text2)' }}>
+                      <td style={{ fontWeight: 600, fontSize: 12 }}>{fmtMonth(c.source_month)}</td>
+                      <td style={{ fontSize: 12 }}>{c.order_no || '—'}</td>
+                      <td style={{ fontWeight: 600, fontSize: 12 }}>{c.sku}</td>
+                      <td style={{ fontSize: 12 }}>{c.sku_name}</td>
+                      <td>
+                        {c.credit_type === 'retail'
+                          ? <span className="badge badge-retail">Retail</span>
+                          : <span className="badge badge-commission">Commission</span>}
+                      </td>
+                      <td style={{ textAlign: 'right', textDecoration: 'line-through' }}>{fmt(c.amount)}</td>
+                      <td style={{ fontSize: 12 }}>{c.cancel_reason || '—'}</td>
+                      <td style={{ fontSize: 12 }}>
+                        {c.canceled_at ? new Date(c.canceled_at).toLocaleDateString() : '—'}
+                      </td>
+                      <td>
+                        <button className="btn btn-sm" disabled={busyId === c.id}
+                          title="Undo cancel — move back to open"
+                          onClick={() => handleRestore(c.id)}>
+                          {busyId === c.id ? '…' : '↺ Restore'}
+                        </button>
                       </td>
                       <td>
                         <button className="btn btn-sm btn-danger" disabled={deleting === c.id}

@@ -147,6 +147,13 @@ New column on `credits`:
 
 Run: `DATABASE_URL="..." node backend/migrate_v8.js`
 
+### Migration v10 (migrate_v10.js — applied 2026-11-03)
+New columns on `credits`, supporting a third status `'canceled'`:
+- `canceled_at TIMESTAMPTZ` — when the credit was canceled
+- `cancel_reason TEXT` — free-text reason (e.g. "Returned before invoice")
+
+Run: `DATABASE_URL="..." node backend/migrate_v10.js`
+
 ---
 
 ## Email automation
@@ -229,7 +236,10 @@ Both require `Authorization: Bearer <CRON_SECRET>` (sent automatically by Vercel
 | GET | `/api/cron/blog-post` | Vercel cron — runs every Monday at 10:00 UTC; generates + publishes one blog post |
 | GET | `/api/payments` | List payments (optional `?type=commission`) |
 | POST | `/api/payments` | Record/allocate a payment |
-| GET | `/api/credits` | Returns `{ open: [...], applied: [...] }` |
+| GET | `/api/credits` | Returns `{ open: [...], applied: [...], canceled: [...] }` |
+| POST | `/api/credits/:id/cancel` | Cancel an open credit `{ reason? }` — kept for reference, never applied |
+| POST | `/api/credits/:id/restore` | Undo a cancel — back to `open` |
+| DELETE | `/api/credits/:id` | Hard-delete a credit (for mistakes); removes its adjustment if applied |
 | POST | `/api/credits/:id/apply` | Manually apply an open credit to a chosen invoice month |
 | POST | `/api/credits/send-snapshot` | Email open credits summary to `LIFTUP_EMAIL` CC `OUR_EMAIL`; triggered by "✉ Send snapshot" button on Credits page |
 | GET | `/api/email/poll` | Poll all 6 Zoho folders for new emails (cron every 4h + manual) |
@@ -273,9 +283,13 @@ Two paths create credits:
 
 **2. Returns flow** (`source='return_processed'`): when a pending return is processed with `disposition='after'` via `POST /api/returns/:id/process`, credits are created without changing the order's status or invoice totals (invoice was already sent). By default both a retail and a commission credit are created; `ProcessReturnModal` lets the user uncheck one side — e.g. when LiftUp invoiced us for the sale but we never invoiced LiftUp commission on it, only the retail credit applies. These credits survive subsequent invoice re-saves.
 
-Credits start as `status='open'`. They can be:
+**Returns flow, `disposition='before'`**: the order is set to `before` (excluded from invoice totals) and both a retail and a commission credit are created **already `status='canceled'`** (reason "Returned before invoice"). They are a reference record of the return only.
+
+Credits start as `status='open'` (except the canceled-on-creation case above). They can be:
 - **Auto-applied**: when a later-month invoice is saved, all open credits from prior months are automatically inserted as negative adjustment lines and marked `status='applied'`
 - **Manually applied**: via the Credits page "Apply to invoice →" button, which calls `POST /api/credits/:id/apply`
+- **Canceled**: via the Credits page "Cancel out" button (open credits only). A canceled credit is kept for reference but is never auto-applied, can't be re-linked from the invoice editor, and is excluded from the snapshot email. Invoice save never deletes or regenerates a canceled `invoice_save` credit (matched on order_no + sku + credit_type). "↺ Restore" returns it to open.
+- **Deleted**: "×" hard-deletes the row (for credits created by mistake).
 
 ---
 
@@ -309,6 +323,13 @@ Credits start as `status='open'`. They can be:
 3. Process with only one checkbox checked (e.g. retail only, when we never invoiced LiftUp commission on that order) → only 1 open credit created
 4. Re-save the source invoice → credits survive (not deleted by invoice save)
 5. Navigate to Credits page → order # column matches the source order; apply credits to a future invoice manually
+6. Process with `disposition='before'` → order excluded from invoice totals; 2 credits created with `status='canceled'`, visible under "Show canceled", never auto-applied
+
+### Feature 5 — Canceling credits
+1. Credits page → "Cancel out" on an open credit → moves to Canceled list with reason + date
+2. Save a later-month invoice for the first time → canceled credit is NOT auto-applied
+3. Re-save the source invoice of a canceled `invoice_save` credit → it stays canceled (not recreated as open)
+4. "↺ Restore" → back to open
 
 ### Regression checks
 - Existing invoice save/load works unchanged
