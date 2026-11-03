@@ -22,7 +22,14 @@ export default function Dashboard() {
   const [returnModal,     setReturnModal]     = useState(null)
   const [polling,         setPolling]         = useState(false)
   const [pollMsg,         setPollMsg]         = useState(null)
+  const [statusRows,      setStatusRows]      = useState([])
   const navigate = useNavigate()
+
+  // Payment balances (includes adjustment/credit sums). Refetched whenever the
+  // invoice list changes, so every existing refresh path also updates these.
+  useEffect(() => {
+    api.getPaymentStatus().then(setStatusRows).catch(() => {})
+  }, [invoices])
 
   useEffect(() => {
     api.listInvoices()
@@ -73,9 +80,59 @@ export default function Dashboard() {
 
   const totalRetail    = invoices.reduce((s, i) => s + Number(i.total_retail), 0)
   const totalComm      = invoices.reduce((s, i) => s + Number(i.total_commission), 0)
-  const unpaidMfr      = invoices.filter(i => !i.mfr_invoice_paid).length
-  const unpaidComm     = invoices.filter(i => !i.commission_paid).length
-  const partialComm    = invoices.filter(i => !i.commission_paid && Number(i.commission_amount_received) > 0).length
+  const totalPaidOut   = invoices.reduce((s, i) => s + Number(i.mfr_amount_paid || 0), 0)
+  const totalCommRecvd = invoices.reduce((s, i) => s + Number(i.commission_amount_received || 0), 0)
+
+  // Outstanding balances, oldest first. The paid flags win (they can be set
+  // manually); otherwise balance = amount due − amount already paid/received.
+  const oldestFirst = [...statusRows].sort((a, b) => a.month.localeCompare(b.month))
+  const owedToLiftUp = oldestFirst
+    .filter(r => !r.mfr_invoice_paid)
+    .map(r => {
+      const due  = Number(r.total_retail) + Number(r.retail_adj_sum)
+      const paid = Number(r.mfr_amount_paid || 0)
+      return { month: r.month, due, paid, balance: +(due - paid).toFixed(2) }
+    })
+    .filter(r => r.balance > 0.005)
+  const commOwedToUs = oldestFirst
+    .filter(r => !r.commission_paid)
+    .map(r => {
+      const due  = Number(r.total_commission) + Number(r.comm_adj_sum)
+      const paid = Number(r.commission_amount_received || 0)
+      return { month: r.month, due, paid, balance: +(due - paid).toFixed(2) }
+    })
+    .filter(r => r.balance > 0.005)
+  const owedToLiftUpTotal = owedToLiftUp.reduce((s, r) => s + r.balance, 0)
+  const commOwedTotal     = commOwedToUs.reduce((s, r) => s + r.balance, 0)
+
+  function OutstandingCard({ title, sub, total, rows, color, emptyText }) {
+    return (
+      <div className="card" style={{ marginBottom: 0 }}>
+        <div className="card-title" style={{ marginBottom: 4 }}>{title}</div>
+        <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: '0.5rem' }}>{sub}</div>
+        <div style={{ fontSize: 28, fontWeight: 700, color: rows.length ? color : 'var(--green)', marginBottom: '0.75rem' }}>
+          {fmt(total)}
+        </div>
+        {rows.length === 0 ? (
+          <div style={{ fontSize: 13, color: 'var(--text2)' }}>{emptyText}</div>
+        ) : (
+          <table style={{ fontSize: 13 }}>
+            <tbody>
+              {rows.map(r => (
+                <tr key={r.month} style={{ cursor: 'pointer' }} onClick={() => navigate(`/invoice/${r.month}`)}>
+                  <td style={{ fontWeight: 600, paddingLeft: 0 }}>{fmtMonth(r.month)}</td>
+                  <td style={{ fontSize: 12, color: 'var(--text2)' }}>
+                    {r.paid > 0 ? `${fmt(r.paid)} of ${fmt(r.due)} paid` : ''}
+                  </td>
+                  <td style={{ textAlign: 'right', fontWeight: 600, paddingRight: 0 }}>{fmt(r.balance)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    )
+  }
 
   if (loading) return <div className="empty-state"><div className="spinner" /> Loading...</div>
 
@@ -84,7 +141,7 @@ export default function Dashboard() {
       <div className="page-header">
         <div>
           <div className="page-title">Dashboard</div>
-          <div className="page-sub">Overview of all invoices</div>
+          <div className="page-sub">What's outstanding right now</div>
         </div>
         <div className="gap-2">
           <button className="btn" onClick={handlePoll} disabled={polling}>
@@ -153,41 +210,48 @@ export default function Dashboard() {
         </div>
       ) : (
         <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12, marginBottom: '1.5rem' }}>
+            <OutstandingCard
+              title="Commission owed to us"
+              sub="Unpaid commission from LiftUp, after commission credits"
+              total={commOwedTotal}
+              rows={commOwedToUs}
+              color="var(--green)"
+              emptyText="✓ All commissions received"
+            />
+            <OutstandingCard
+              title="We owe LiftUp"
+              sub="Unpaid LiftUp invoices, after retail credits"
+              total={owedToLiftUpTotal}
+              rows={owedToLiftUp}
+              color="var(--amber)"
+              emptyText="✓ All LiftUp invoices paid"
+            />
+          </div>
+
+          <div className="card-title">All-time totals</div>
           <div className="metric-grid">
             <div className="metric">
-              <div className="metric-label">Total invoices</div>
+              <div className="metric-label">Invoices</div>
               <div className="metric-value">{invoices.length}</div>
             </div>
             <div className="metric">
-              <div className="metric-label">All-time retail</div>
+              <div className="metric-label">Retail</div>
               <div className="metric-value">{fmt(totalRetail)}</div>
             </div>
             <div className="metric">
-              <div className="metric-label">All-time commission</div>
+              <div className="metric-label">Commission</div>
               <div className="metric-value green">{fmt(totalComm)}</div>
             </div>
             <div className="metric">
-              <div className="metric-label">LiftUp invoices unpaid</div>
-              <div className="metric-value" style={{ color: unpaidMfr > 0 ? 'var(--amber)' : 'var(--green)' }}>
-                {unpaidMfr}
-              </div>
+              <div className="metric-label">Paid to LiftUp</div>
+              <div className="metric-value">{fmt(totalPaidOut)}</div>
             </div>
             <div className="metric">
-              <div className="metric-label">Commissions unpaid</div>
-              <div className="metric-value" style={{ color: unpaidComm > 0 ? 'var(--amber)' : 'var(--green)' }}>
-                {unpaidComm}
-              </div>
-              {partialComm > 0 && <div className="metric-note">{partialComm} partially received</div>}
+              <div className="metric-label">Commission received</div>
+              <div className="metric-value green">{fmt(totalCommRecvd)}</div>
             </div>
           </div>
-
-          {(unpaidMfr > 0 || unpaidComm > 0) && (
-            <div className="alert alert-warn" style={{ marginBottom: '1.5rem' }}>
-              ⚠ {unpaidMfr > 0 ? `${unpaidMfr} LiftUp invoice(s) awaiting payment.` : ''}
-              {unpaidMfr > 0 && unpaidComm > 0 ? ' · ' : ''}
-              {unpaidComm > 0 ? `${unpaidComm} commission(s) not yet received.` : ''}
-            </div>
-          )}
 
           <div className="card-title">All invoices</div>
           <div className="table-wrap">
