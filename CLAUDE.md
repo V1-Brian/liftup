@@ -3,7 +3,8 @@
 ## Terminology
 - **LiftUp** = the manufacturer / client (makes the products, pays us commission)
 - **We / the service provider** = the company this app is built for (earns commissions as sales rep)
-- Financial flow: LiftUp invoices us for retail sales → we invoice LiftUp for our commission → we pay LiftUp (retail − commission) → LiftUp pays us commission separately
+- Financial flow: LiftUp invoices us for retail sales → we invoice LiftUp for our commission → we pay LiftUp → LiftUp pays us commission separately
+- **In practice we pay LiftUp the full retail amount** (payment records match `total_retail` exactly, e.g. Apr 2026: $7,820 retail / $7,820 paid) and LiftUp pays the full commission back separately. Some older code still treats "paid to LiftUp" as retail − commission — see Known issues.
 - Always use "LiftUp" (not "manufacturer") in UI labels and documentation
 
 ## What this app is
@@ -45,7 +46,7 @@ Sales commission tracking app. Tracks monthly invoices, orders, SKU configs, and
   - `ZOHO_CREDIT_FOLDER_ID` = `7267523000000318023`
   - `ZOHO_AMAZON_RETURNS_FOLDER_ID` = `7267523000000422018`
 - **Note**: when setting env vars via CLI, always use `printf '...' | vercel env add` — never `echo` (adds a trailing newline that breaks Zoho token refresh)
-- Deploy command: `vercel --prod` from repo root (Vercel CLI must be logged in to `v1-ventures` scope)
+- **Deploys automatically on push to `master`** (Vercel Git integration; live ~30s after push). Manual alternative: `vercel --prod` from repo root (Vercel CLI must be logged in to `v1-ventures` scope)
 - If CLI loses project link: `vercel link --project liftup --scope v1-ventures --yes`
 
 ### Render (Database)
@@ -262,8 +263,25 @@ Outbound emails currently send HTML body only. Attaching PDFs fails with "0 byte
 ### Frontend — invoice mismatch display
 `invoices.mismatch_notes` is stored in the DB when a LiftUp invoice email is parsed, but no UI yet shows it on the invoice Status tab. Should display as a warning card when non-null.
 
+### "Paid to LiftUp" threshold inconsistent with practice
+`POST /api/payments` and the QB-receipt email handler mark `mfr_invoice_paid=true` once payments reach `total_retail + adjustments − total_commission`. Since we actually pay full retail, a partial payment can flip an invoice to paid early. Fix: threshold should be `total_retail + retail adjustments` (exclude `commission_credit` adjustments), matching the Dashboard.
+
+### Data anomalies (as of 2026-11-03, not corrected)
+- **Jul 2026**: `mfr_amount_paid` = $36,330 vs. $1,983 due — looks like a multi-month payment allocated entirely to July.
+- **Mar 2026**: `mfr_invoice_paid=true` but `mfr_amount_paid` = $0 (flag set manually, no payment recorded). Dashboard outstanding is correct; only the all-time "Paid to LiftUp" total is understated.
+
 ### Blog module
 Live as of 2026-05-05. Runs every Monday at 10 AM UTC.
+
+---
+
+## Dashboard
+Leads with two outstanding-balance cards, each listing unpaid months oldest first (click → invoice), with "$X of $Y paid" for partial payments. Data comes from `GET /api/invoices/payment-status` (refetched whenever the invoice list changes).
+- **Commission owed to us** = `total_commission + comm_adj_sum − commission_amount_received`, for invoices where `commission_paid=false`
+- **We owe LiftUp** = `total_retail + retail_adj_sum − mfr_amount_paid`, for invoices where `mfr_invoice_paid=false`
+- The paid flags win: a month flagged paid (including manually) shows $0 outstanding.
+
+Below that: an **All-time totals** row (invoices, retail, commission, paid to LiftUp, commission received), then the full invoice table. Pending returns and unmatched-email warnings still appear at the top.
 
 ---
 
@@ -283,7 +301,7 @@ Two paths create credits:
 
 **2. Returns flow** (`source='return_processed'`): when a pending return is processed with `disposition='after'` via `POST /api/returns/:id/process`, credits are created without changing the order's status or invoice totals (invoice was already sent). By default both a retail and a commission credit are created; `ProcessReturnModal` lets the user uncheck one side — e.g. when LiftUp invoiced us for the sale but we never invoiced LiftUp commission on it, only the retail credit applies. These credits survive subsequent invoice re-saves.
 
-**Returns flow, `disposition='before'`**: the order is set to `before` (excluded from invoice totals) and both a retail and a commission credit are created **already `status='canceled'`** (reason "Returned before invoice"). They are a reference record of the return only.
+**Returns flow, `disposition='before'`**: the order is set to `before` (excluded from invoice totals) and both a retail and a commission credit are created **already `status='canceled'`** (reason "Returned before invoice"). They are a reference record of the return only. The invoice's `total_retail`, `total_commission` and `total_credit` are recalculated from its remaining orders (`total_credit` = retail value of `after` orders, same formula as invoice save — previously it was reset to 0).
 
 Credits start as `status='open'` (except the canceled-on-creation case above). They can be:
 - **Auto-applied**: when a later-month invoice is saved, all open credits from prior months are automatically inserted as negative adjustment lines and marked `status='applied'`
